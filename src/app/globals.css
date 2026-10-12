@@ -1,0 +1,212 @@
+@import "tailwindcss";
+
+:root {
+  --ink: #0c2f2a;
+  --ink-soft: #1a4a42;
+  --sea: #1f7a6c;
+  --sea-bright: #2a9b89;
+  --foam: #d7efe9;
+  --mist: #eef5f2;
+  --sand: #f6f1e8;
+  --paper: #fbfaf7;
+  --line: rgba(12, 47, 42, 0.12);
+  --warn: #b45309;
+  --danger: #9f1239;
+  --good: #047857;
+}
+
+@theme inline {
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-sea: var(--sea);
+  --color-sea-bright: var(--sea-bright);
+  --color-foam: var(--foam);
+  --color-mist: var(--mist);
+  --color-sand: var(--sand);
+  --color-paper: var(--paper);
+  --color-line: var(--line);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-good: var(--good);
+  --font-display: var(--font-fraunces);
+  --font-sans: var(--font-outfit);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--ink);
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(42, 155, 137, 0.18), transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, rgba(246, 241, 232, 0.9), transparent 50%),
+    linear-gradient(180deg, var(--mist) 0%, var(--paper) 45%, var(--sand) 100%);
+  font-family: var(--font-outfit), system-ui, sans-serif;
+}
+
+h1,
+h2,
+h3,
+.brand {
+  font-family: var(--font-fraunces), Georgia, serif;
+  font-weight: 550;
+  letter-spacing: -0.02em;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  background: rgba(31, 122, 108, 0.22);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes drift {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes draw-line {
+  from {
+    stroke-dashoffset: 240;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.animate-rise {
+  animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-rise-delay-1 {
+  animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.12s both;
+}
+
+.animate-rise-delay-2 {
+  animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.24s both;
+}
+
+.animate-drift {
+  animation: drift 7s ease-in-out infinite;
+}
+
+.wave-path {
+  stroke-dasharray: 240;
+  animation: draw-line 1.6s ease forwards 0.3s;
+}
+
+.noise {
+  position: relative;
+}
+
+.noise::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.shell {
+  width: min(1120px, calc(100% - 2rem));
+  margin-inline: auto;
+}
+
+.panel {
+  background: rgba(251, 250, 247, 0.72);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(10px);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 999px;
+  padding: 0.8rem 1.35rem;
+  font-weight: 560;
+  transition: transform 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+}
+
+.btn-primary {
+  background: var(--ink);
+  color: var(--foam);
+  box-shadow: 0 10px 30px rgba(12, 47, 42, 0.18);
+}
+
+.btn-primary:hover {
+  background: var(--ink-soft);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.btn-sea {
+  background: var(--sea);
+  color: white;
+}
+
+.input,
+.select {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 0.85rem;
+  padding: 0.75rem 0.9rem;
+  color: var(--ink);
+  outline: none;
+}
+
+.input:focus,
+.select:focus {
+  border-color: var(--sea);
+  box-shadow: 0 0 0 3px rgba(31, 122, 108, 0.15);
+}
+
+.progress {
+  height: 0.45rem;
+  border-radius: 999px;
+  background: rgba(12, 47, 42, 0.08);
+  overflow: hidden;
+}
+
+.progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--sea), var(--sea-bright));
+}
