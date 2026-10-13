@@ -55,6 +55,7 @@ export type PlaidItem = {
   institution_id: string | null;
   institution_name: string | null;
   cursor: string | null;
+  access_mode: "read_only";
   created_at: string;
   updated_at: string;
 };
