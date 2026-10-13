@@ -23,6 +23,9 @@ export function PlaidLinkButton({ onLinked }: { onLinked?: () => void }) {
       const res = await fetch("/api/plaid/create-link-token", { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.hint || data.error || "Could not create link token");
+      if (data.access_mode && data.access_mode !== "read_only") {
+        throw new Error("Refusing to open Link: connection is not read-only");
+      }
       setToken(data.link_token);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed");
@@ -72,9 +75,11 @@ export function PlaidLinkButton({ onLinked }: { onLinked?: () => void }) {
   if (configured === false) {
     return (
       <div className="panel rounded-2xl p-4 text-sm text-ink-soft">
-        <p className="font-medium text-ink">Bank linking via Plaid</p>
+        <p className="font-medium text-ink">Bank linking via Plaid (read-only)</p>
         <p className="mt-1 leading-relaxed">
-          Add free sandbox keys to <code className="text-sea">.env.local</code> (
+          Anchored only requests read access — balances, transactions, and holdings. It never
+          requests payment or transfer permissions. Add free sandbox keys to{" "}
+          <code className="text-sea">.env.local</code> (
           <code>PLAID_CLIENT_ID</code>, <code>PLAID_SECRET</code>) from{" "}
           <a className="underline" href="https://dashboard.plaid.com/" target="_blank" rel="noreferrer">
             dashboard.plaid.com
@@ -93,8 +98,12 @@ export function PlaidLinkButton({ onLinked }: { onLinked?: () => void }) {
         disabled={busy || configured === null}
         onClick={createToken}
       >
-        {busy ? "Connecting…" : "Link bank with Plaid"}
+        {busy ? "Connecting…" : "Link bank (read-only)"}
       </button>
+      <p className="max-w-md text-xs leading-relaxed text-ink-soft/70">
+        Read-only access for checking, savings, credit cards, and investments. Anchored cannot
+        move money, pay bills, or initiate ACH.
+      </p>
       {error && <p className="text-sm text-danger">{error}</p>}
     </div>
   );

@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
 import { getDb } from "@/lib/db";
-import { getPlaidClient, isPlaidConfigured, mapPlaidAccountType } from "@/lib/plaid";
+import {
+  getPlaidClient,
+  isPlaidConfigured,
+  mapPlaidAccountType,
+  PLAID_ACCESS_MODE,
+} from "@/lib/plaid";
 
 export const runtime = "nodejs";
 
@@ -33,14 +38,16 @@ export async function POST(req: NextRequest) {
 
     const insert = db.transaction(() => {
       db.prepare(
-        `INSERT INTO plaid_items (id, item_id, access_token, institution_id, institution_name)
-         VALUES (?, ?, ?, ?, ?)`
+        `INSERT INTO plaid_items (
+          id, item_id, access_token, institution_id, institution_name, access_mode
+        ) VALUES (?, ?, ?, ?, ?, ?)`
       ).run(
         plaidItemRowId,
         itemId,
         accessToken,
         accountsRes.data.item.institution_id ?? null,
-        institutionName
+        institutionName,
+        PLAID_ACCESS_MODE
       );
 
       const insertAccount = db.prepare(
@@ -90,7 +97,13 @@ export async function POST(req: NextRequest) {
       // investments product may not be on every item
     }
 
-    return NextResponse.json({ ok: true, item_id: itemId, accounts: accountsRes.data.accounts.length });
+    return NextResponse.json({
+      ok: true,
+      item_id: itemId,
+      accounts: accountsRes.data.accounts.length,
+      access_mode: PLAID_ACCESS_MODE,
+      read_only: true,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Exchange failed";
     return NextResponse.json({ error: message }, { status: 500 });

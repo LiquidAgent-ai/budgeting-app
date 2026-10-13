@@ -76,7 +76,7 @@ export default function LandingPage() {
           {[
             {
               title: "Link what you own",
-              body: "Plaid sandbox or production keys for checking, credit, and investment accounts. Manual accounts when you want zero third parties.",
+              body: "Read-only Plaid access for checking, credit, and investments — balances and history only, never transfers. Manual accounts when you want zero third parties.",
             },
             {
               title: "See the leaks",

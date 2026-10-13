@@ -60,6 +60,11 @@ export default function AccountsPage() {
           Connect live institutions with Plaid, or keep everything local with manual balances. Demo
           data is available so you can explore before linking anything real.
         </p>
+        <p className="mt-3 max-w-2xl rounded-xl border border-sea/25 bg-foam/50 px-4 py-3 text-sm text-ink-soft">
+          All Plaid connections are <span className="font-medium text-ink">read-only</span>. Anchored
+          can view balances, transactions, and holdings — it cannot transfer funds, pay bills, or
+          initiate ACH from checking, savings, credit, or investment accounts.
+        </p>
       </div>
 
       <div className="flex flex-wrap items-start gap-4">

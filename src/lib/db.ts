@@ -19,6 +19,7 @@ function migrate(db: Database.Database) {
       institution_id TEXT,
       institution_name TEXT,
       cursor TEXT,
+      access_mode TEXT NOT NULL DEFAULT 'read_only',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -73,6 +74,14 @@ function migrate(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id);
     CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category);
   `);
+
+  // Existing DBs created before access_mode existed
+  const cols = db.prepare("PRAGMA table_info(plaid_items)").all() as { name: string }[];
+  if (!cols.some((c) => c.name === "access_mode")) {
+    db.exec(
+      `ALTER TABLE plaid_items ADD COLUMN access_mode TEXT NOT NULL DEFAULT 'read_only'`
+    );
+  }
 }
 
 export function getDb(): Database.Database {

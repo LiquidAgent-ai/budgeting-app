@@ -4,13 +4,26 @@ Locally hosted personal finance — a Rocket Money–style app that keeps your d
 
 ## What you get
 
-- **Link banks** via [Plaid](https://plaid.com) (checking, credit cards, investments)
+- **Link banks** via [Plaid](https://plaid.com) (checking, credit cards, investments) — **read-only**
 - **Manual accounts** when you do not want a third-party aggregator
 - **Transactions** with auto-categorization
 - **Budgets** per category
 - **Subscription** detection
 - **Net worth** across cash, credit, and investments
 - **Demo household** so the UI is useful before any keys are set
+
+## Read-only financial access
+
+Anchored is intentionally **view-only** for every linked institution:
+
+| Allowed (read) | Never requested |
+|----------------|-----------------|
+| Transactions, balances | Transfer / ACH |
+| Investment holdings | Payment Initiation |
+| Liabilities (optional) | Auth (account/routing for payments) |
+| Recurring transactions (optional) | Processor payments |
+
+Link tokens are created only with the read-only product allowlist in `src/lib/plaid.ts`. Money-moving Plaid products are blocked at runtime.
 
 ## Quick start
 
@@ -29,10 +42,10 @@ Open [http://localhost:3000](http://localhost:3000).
 1. Create a free account at [dashboard.plaid.com](https://dashboard.plaid.com/)
 2. Copy **Sandbox** `client_id` and `secret` into `.env.local`
 3. Restart `npm run dev`
-4. Go to **Accounts → Link bank with Plaid**
+4. Go to **Accounts → Link bank (read-only)**
 5. In sandbox, use Plaid’s test credentials (e.g. user `user_good`, password `pass_good`)
 
-Production / Development Plaid keys work the same way — set `PLAID_ENV=development` or `production`. Investment holdings sync when the Investments product is enabled on your Plaid account.
+Production / Development Plaid keys work the same way — set `PLAID_ENV=development` or `production`. Investment holdings sync when the Investments product is enabled on your Plaid account. Linked items are stored with `access_mode = read_only`.
 
 ## Data location
 
