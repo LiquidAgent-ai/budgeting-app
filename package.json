@@ -2,13 +2,16 @@
   "name": "anchored",
   "version": "1.0.0",
   "private": true,
-  "description": "Locally hosted personal finance — link banks, track spending, see net worth",
+  "description": "Local personal finance for Windows — its own window, SQLite on your PC",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "seed": "npx tsx scripts/seed.ts",
-    "db:reset": "rm -f data/anchored.db data/anchored.db-wal data/anchored.db-shm && npm run seed"
+    "seed": "tsx scripts/seed.ts",
+    "db:reset": "tsx scripts/reset-db.ts",
+    "desktop:dev": "electron .",
+    "desktop:dist": "node scripts/build-desktop.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
@@ -31,6 +34,8 @@
     "@types/uuid": "^10.0.0",
     "postcss": "^8.5.29",
     "tailwindcss": "^4.3.3",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.0.12",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3"
   }

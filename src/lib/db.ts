@@ -2,10 +2,40 @@ import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const DB_PATH = path.join(DATA_DIR, "anchored.db");
-
 let dbInstance: Database.Database | null = null;
+let openedPath: string | null = null;
+
+/** SQLite file for this process. `DATABASE_PATH` wins; otherwise `data/anchored.db`. */
+export function resolveDatabasePath(): string {
+  const configured = process.env.DATABASE_PATH?.trim();
+  if (configured) return path.resolve(configured);
+  return path.join(process.cwd(), "data", "anchored.db");
+}
+
+/** True when the database file is already on disk. Does not create it. */
+export function databaseFileExists(): boolean {
+  return fs.existsSync(resolveDatabasePath());
+}
+
+type StartupGlobal = typeof globalThis & {
+  __anchoredDatabaseExistedAtStartup?: boolean;
+};
+
+/**
+ * Whether the SQLite file was already present when this server process loaded.
+ * Shared across Next.js route bundles via globalThis. Opening the database
+ * later in the same process does not flip this to true.
+ */
+export function databaseExistedAtStartup(): boolean {
+  const g = globalThis as StartupGlobal;
+  if (g.__anchoredDatabaseExistedAtStartup === undefined) {
+    g.__anchoredDatabaseExistedAtStartup = fs.existsSync(resolveDatabasePath());
+  }
+  return Boolean(g.__anchoredDatabaseExistedAtStartup);
+}
+
+// Record this before any route opens the file. Later imports reuse globalThis.
+databaseExistedAtStartup();
 
 function migrate(db: Database.Database) {
   db.exec(`
@@ -85,22 +115,33 @@ function migrate(db: Database.Database) {
 }
 
 export function getDb(): Database.Database {
-  if (dbInstance) return dbInstance;
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+  databaseExistedAtStartup();
+  const dbPath = resolveDatabasePath();
+  if (dbInstance && openedPath === dbPath) return dbInstance;
+  if (dbInstance) {
+    dbInstance.close();
+    dbInstance = null;
+    openedPath = null;
   }
-  dbInstance = new Database(DB_PATH);
+  const dir = path.dirname(dbPath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  dbInstance = new Database(dbPath);
+  openedPath = dbPath;
   migrate(dbInstance);
   return dbInstance;
 }
 
 export function resetDb() {
+  const dbPath = resolveDatabasePath();
   if (dbInstance) {
     dbInstance.close();
     dbInstance = null;
+    openedPath = null;
   }
   for (const suffix of ["", "-wal", "-shm"]) {
-    const p = DB_PATH + suffix;
+    const p = dbPath + suffix;
     if (fs.existsSync(p)) fs.unlinkSync(p);
   }
 }

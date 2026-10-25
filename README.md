@@ -1,70 +1,84 @@
-# Anchored
+# Anchored for Windows
 
-Locally hosted personal finance — a Rocket Money–style app that keeps your data in SQLite on your machine.
+Anchored is a personal finance app that stays on your computer. This is the Windows app. It opens its own window and keeps your books in a SQLite file on that PC. You do not start a separate dev server to use the installed app.
 
-## What you get
+A TrueNAS or other container install would be a different way to run Anchored. It is not this Windows app, and those container files are not part of this project.
 
-- **Link banks** via [Plaid](https://plaid.com) (checking, credit cards, investments) — **read-only**
-- **Manual accounts** when you do not want a third-party aggregator
-- **Transactions** with auto-categorization
-- **Budgets** per category
-- **Subscription** detection
-- **Net worth** across cash, credit, and investments
-- **Demo household** so the UI is useful before any keys are set
+## Install
 
-## Read-only financial access
-
-Anchored is intentionally **view-only** for every linked institution:
-
-| Allowed (read) | Never requested |
-|----------------|-----------------|
-| Transactions, balances | Transfer / ACH |
-| Investment holdings | Payment Initiation |
-| Liabilities (optional) | Auth (account/routing for payments) |
-| Recurring transactions (optional) | Processor payments |
-
-Link tokens are created only with the read-only product allowlist in `src/lib/plaid.ts`. Money-moving Plaid products are blocked at runtime.
-
-## Quick start
+Build the installer on a Windows PC:
 
 ```bash
-cd anchored
-cp .env.example .env.local   # optional until you link real/sandbox banks
 npm install
-npm run seed                 # optional; dashboard also auto-seeds if empty
+npm run desktop:dist
+```
+
+The Setup file is `dist-desktop\Anchored-Setup-1.0.0.exe`. Run it and follow the steps. The installed app includes its own server and does not need Node.js. The command does not publish the file anywhere. There is no download page in this project: the Setup.exe only exists after that Windows build.
+
+On a Mac or Linux machine the same command prepares the server files and then stops. It cannot produce the Windows Setup.exe.
+
+## Where your data lives
+
+The installed app, and the desktop window you open while developing, store the database here:
+
+- Windows: `%APPDATA%\Anchored\anchored.db`
+- Linux: `~/.config/Anchored/anchored.db`
+- Mac: `~/Library/Application Support/Anchored/anchored.db`
+
+Updating or uninstalling the app leaves that file in place.
+
+The first time you open the dashboard on a new install, Anchored loads a demo household so the screens are not empty. If the database file was already there when the app started, it is left alone, even if you deleted every account.
+
+`npm run dev` uses `data/anchored.db` inside this folder, unless you set `DATABASE_PATH` to another full path. The server and any future container keep using `DATABASE_PATH` the same way. The Windows app sets it to the file above.
+
+If the window says Anchored could not start, look at `%APPDATA%\Anchored\server.log`.
+
+## Browser, while you are developing
+
+```bash
+npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
-
-## Link credit cards & checking (Plaid)
-
-1. Create a free account at [dashboard.plaid.com](https://dashboard.plaid.com/)
-2. Copy **Sandbox** `client_id` and `secret` into `.env.local`
-3. Restart `npm run dev`
-4. Go to **Accounts → Link bank (read-only)**
-5. In sandbox, use Plaid’s test credentials (e.g. user `user_good`, password `pass_good`)
-
-Production / Development Plaid keys work the same way — set `PLAID_ENV=development` or `production`. Investment holdings sync when the Investments product is enabled on your Plaid account. Linked items are stored with `access_mode = read_only`.
-
-## Data location
-
-All data lives in `data/anchored.db` (gitignored). Reset with:
+Open http://localhost:3000.
 
 ```bash
-npm run db:reset
+npm run seed       # demo household; does not replace accounts already stored
+npm run db:reset   # delete the database and load the demo household
 ```
 
-## Scripts
+## Desktop window, while you are developing
 
-| Command        | Purpose                    |
-|----------------|----------------------------|
-| `npm run dev`  | Local Next.js server       |
-| `npm run build`| Production build           |
-| `npm start`    | Serve production build     |
-| `npm run seed` | Load demo accounts / txns  |
-| `npm run db:reset` | Wipe DB and re-seed   |
+```bash
+npm run desktop:dev
+```
 
-## Stack
+That opens an Anchored window and starts the app for you. Quit the window and the server stops with it.
 
-Next.js 15 · React 19 · SQLite (`better-sqlite3`) · Plaid · Recharts · Tailwind CSS 4
+## Bank linking
+
+The installer contains no bank keys and no `.env` file.
+
+To link a bank from the Windows app, create `%APPDATA%\Anchored\plaid.env`:
+
+```text
+PLAID_CLIENT_ID=your_client_id
+PLAID_SECRET=your_sandbox_secret
+PLAID_ENV=sandbox
+```
+
+Restart Anchored. For `npm run dev`, copy `.env.example` to `.env.local` and use the same kind of values. Do not commit that file.
+
+Anchored only asks Plaid for read-only access: transactions, balances, investments, and optional liabilities. It does not request transfers, payments, or account numbers for moving money.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Website at http://localhost:3000 |
+| `npm run desktop:dev` | Anchored window for development |
+| `npm run desktop:dist` | Build the Windows Setup.exe (on Windows) |
+| `npm run build` | Production website build |
+| `npm start` | Serve that production build |
+| `npm run seed` | Add the demo household if there are no accounts |
+| `npm run db:reset` | Delete the database and load the demo household |
