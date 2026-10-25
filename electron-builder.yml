@@ -1,0 +1,30 @@
+appId: app.anchored.desktop
+productName: Anchored
+executableName: Anchored
+copyright: Copyright © Anchored
+directories:
+  output: dist-desktop
+files:
+  - electron/**/*
+  - package.json
+extraResources:
+  - from: desktop-bundle/standalone
+    to: standalone
+asar: true
+npmRebuild: false
+nodeGypRebuild: false
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  requestedExecutionLevel: asInvoker
+  artifactName: Anchored-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  allowElevation: true
+  deleteAppDataOnUninstall: false
+  shortcutName: Anchored
+  uninstallDisplayName: Anchored
