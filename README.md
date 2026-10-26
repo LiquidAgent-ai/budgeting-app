@@ -6,14 +6,22 @@ A TrueNAS or other container install would be a different way to run Anchored. I
 
 ## Install
 
-Build the installer on a Windows PC:
+Download the installer and double-click it:
+
+[Anchored-Setup-1.0.0.exe](https://github.com/LiquidAgent-ai/budgeting-app/releases/latest/download/Anchored-Setup-1.0.0.exe)
+
+That file is a normal Windows setup program. It adds an **Anchored** shortcut to the Start menu and to the desktop. The installed app includes its own server and does not need Node.js.
+
+GitHub builds this installer from `main` and attaches it to the [latest release](https://github.com/LiquidAgent-ai/budgeting-app/releases/latest).
+
+To build the same Setup.exe yourself, use a Windows PC:
 
 ```bash
 npm install
 npm run desktop:dist
 ```
 
-The Setup file is `dist-desktop\Anchored-Setup-1.0.0.exe`. Run it and follow the steps. The installed app includes its own server and does not need Node.js. The command does not publish the file anywhere. There is no download page in this project: the Setup.exe only exists after that Windows build.
+The file is written to `dist-desktop\Anchored-Setup-1.0.0.exe`.
 
 On a Mac or Linux machine the same command prepares the server files and then stops. It cannot produce the Windows Setup.exe.
 

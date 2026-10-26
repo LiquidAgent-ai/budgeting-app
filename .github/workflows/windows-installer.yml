@@ -1,0 +1,70 @@
+name: Windows installer
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-installer
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish Setup.exe
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build NSIS installer
+        run: npm run desktop:dist
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Anchored-Setup
+          path: dist-desktop/Anchored-Setup-*.exe
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          tag="v${version}"
+          shopt -s nullglob
+          files=(dist-desktop/Anchored-Setup-*.exe)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "No Anchored-Setup-*.exe was produced."
+            exit 1
+          fi
+          notes="Double-click the Setup.exe. The installer adds Anchored to the Start menu and the desktop. Your books stay in %APPDATA%\\Anchored\\anchored.db."
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" "${files[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Anchored ${tag}" \
+              --notes "$notes" \
+              --latest
+          fi
+          name="$(basename "${files[0]}")"
+          echo "Download: https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${name}"
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY"

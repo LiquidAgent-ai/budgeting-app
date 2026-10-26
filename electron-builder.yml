@@ -26,5 +26,7 @@ nsis:
   allowToChangeInstallationDirectory: true
   allowElevation: true
   deleteAppDataOnUninstall: false
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
   shortcutName: Anchored
   uninstallDisplayName: Anchored
