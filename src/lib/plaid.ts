@@ -1,3 +1,4 @@
+import "server-only";
 import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from "plaid";
 
 /**
@@ -35,19 +36,33 @@ export function isPlaidConfigured(): boolean {
   );
 }
 
+const PLAID_ENV_NAMES = ["sandbox", "development", "production"] as const;
+
+export type PlaidEnvName = (typeof PLAID_ENV_NAMES)[number];
+
+/** sandbox unless PLAID_ENV is one of Plaid's real environment names. */
+export function plaidEnvironmentName(): PlaidEnvName {
+  const env = process.env.PLAID_ENV || "sandbox";
+  return (PLAID_ENV_NAMES as readonly string[]).includes(env) ? (env as PlaidEnvName) : "sandbox";
+}
+
 export function getPlaidClient(): PlaidApi {
   if (!isPlaidConfigured()) {
     throw new Error("Plaid is not configured. Add PLAID_CLIENT_ID and PLAID_SECRET to .env.local");
   }
 
-  const env = (process.env.PLAID_ENV || "sandbox") as keyof typeof PlaidEnvironments;
+  const env = plaidEnvironmentName();
   const configuration = new Configuration({
-    basePath: PlaidEnvironments[env] ?? PlaidEnvironments.sandbox,
+    basePath: PlaidEnvironments[env],
     baseOptions: {
+      // Do not follow redirects. A redirect would send the secret to another host.
+      maxRedirects: 0,
       headers: {
         "PLAID-CLIENT-ID": process.env.PLAID_CLIENT_ID!,
         "PLAID-SECRET": process.env.PLAID_SECRET!,
       },
+      // Axios includes this config when an error is serialized. Redact secrets first.
+      redact: ["PLAID-CLIENT-ID", "PLAID-SECRET", "access_token", "public_token"],
     },
   });
 

@@ -35,6 +35,8 @@ The installed app, and the desktop window you open while developing, store the d
 
 Updating or uninstalling the app leaves that file in place.
 
+On a Mac or Linux PC, Anchored limits that database file, `plaid.env`, and the server log to your user account. On Windows, those files live in your user profile, which other accounts on the PC cannot read. Someone who can already use the computer as you can still open the database. Anchored does not claim to hide data from the person at the keyboard.
+
 The first time you open the dashboard on a new install, Anchored loads a demo household so the screens are not empty. If the database file was already there when the app started, it is left alone, even if you deleted every account.
 
 `npm run dev` uses `data/anchored.db` inside this folder, unless you set `DATABASE_PATH` to another full path. The server and any future container keep using `DATABASE_PATH` the same way. The Windows app sets it to the file above.
@@ -48,7 +50,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000.
+Open http://127.0.0.1:3000. `npm run dev` and `npm start` listen on 127.0.0.1 only, so other computers on the network cannot open the app. `localhost` still works when it points at that address.
 
 ```bash
 npm run seed       # demo household; does not replace accounts already stored

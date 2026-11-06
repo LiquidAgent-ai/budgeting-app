@@ -2,8 +2,51 @@ import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
 
-let dbInstance: Database.Database | null = null;
-let openedPath: string | null = null;
+type DbGlobal = typeof globalThis & {
+  __anchoredDb?: Database.Database;
+  __anchoredDbPath?: string;
+  __anchoredDbUmask?: boolean;
+  __anchoredDbExitHook?: boolean;
+};
+
+function dbGlobal(): DbGlobal {
+  return globalThis as DbGlobal;
+}
+
+function usePrivateUmask() {
+  const g = dbGlobal();
+  if (g.__anchoredDbUmask) return;
+  g.__anchoredDbUmask = true;
+  if (process.platform === "win32") return;
+  if (process.env.NEXT_PHASE === "phase-production-build") return;
+  process.umask(0o077);
+}
+
+function restrictPrivateFile(file: string) {
+  try {
+    if (fs.existsSync(file)) fs.chmodSync(file, 0o600);
+  } catch {
+    // A read-only filesystem or a Windows ACL we cannot change. The file still opens.
+  }
+}
+
+function restrictDatabaseFiles(dbPath: string) {
+  for (const suffix of ["", "-wal", "-shm"]) restrictPrivateFile(dbPath + suffix);
+}
+
+function closeStoredDb() {
+  const g = dbGlobal();
+  const current = g.__anchoredDb;
+  g.__anchoredDb = undefined;
+  g.__anchoredDbPath = undefined;
+  if (current && current.open) {
+    try {
+      current.close();
+    } catch {
+      // already closed
+    }
+  }
+}
 
 /** SQLite file for this process. `DATABASE_PATH` wins; otherwise `data/anchored.db`. */
 export function resolveDatabasePath(): string {
@@ -116,30 +159,53 @@ function migrate(db: Database.Database) {
 
 export function getDb(): Database.Database {
   databaseExistedAtStartup();
+  usePrivateUmask();
+  const g = dbGlobal();
   const dbPath = resolveDatabasePath();
-  if (dbInstance && openedPath === dbPath) return dbInstance;
-  if (dbInstance) {
-    dbInstance.close();
-    dbInstance = null;
-    openedPath = null;
+  if (g.__anchoredDb && g.__anchoredDbPath === dbPath && g.__anchoredDb.open) {
+    restrictDatabaseFiles(dbPath);
+    return g.__anchoredDb;
   }
+  closeStoredDb();
+
   const dir = path.dirname(dbPath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+  const createdDir = !fs.existsSync(dir);
+  if (createdDir) {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    if (process.platform !== "win32" && dir !== path.parse(dir).root) {
+      try {
+        fs.chmodSync(dir, 0o700);
+      } catch {
+        // directory is usable even if the mode cannot be tightened
+      }
+    }
   }
-  dbInstance = new Database(dbPath);
-  openedPath = dbPath;
-  migrate(dbInstance);
-  return dbInstance;
+
+  if (!g.__anchoredDbExitHook) {
+    g.__anchoredDbExitHook = true;
+    process.on("exit", () => {
+      const openDb = dbGlobal().__anchoredDb;
+      if (openDb?.open) {
+        try {
+          openDb.close();
+        } catch {
+          // process is exiting
+        }
+      }
+    });
+  }
+
+  const db = new Database(dbPath);
+  g.__anchoredDb = db;
+  g.__anchoredDbPath = dbPath;
+  migrate(db);
+  restrictDatabaseFiles(dbPath);
+  return db;
 }
 
 export function resetDb() {
   const dbPath = resolveDatabasePath();
-  if (dbInstance) {
-    dbInstance.close();
-    dbInstance = null;
-    openedPath = null;
-  }
+  closeStoredDb();
   for (const suffix of ["", "-wal", "-shm"]) {
     const p = dbPath + suffix;
     if (fs.existsSync(p)) fs.unlinkSync(p);

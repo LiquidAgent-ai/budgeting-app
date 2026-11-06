@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   isPlaidConfigured,
+  plaidEnvironmentName,
   PLAID_ACCESS_MODE,
   PLAID_READ_ONLY_OPTIONAL_PRODUCTS,
   PLAID_READ_ONLY_PRODUCTS,
@@ -22,7 +23,7 @@ export async function GET() {
 
   return NextResponse.json({
     configured: isPlaidConfigured(),
-    env: process.env.PLAID_ENV || "sandbox",
+    env: plaidEnvironmentName(),
     access_mode: PLAID_ACCESS_MODE,
     read_only: true,
     products: PLAID_READ_ONLY_PRODUCTS,

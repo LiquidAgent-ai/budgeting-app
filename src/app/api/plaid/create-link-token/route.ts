@@ -6,6 +6,7 @@ import {
   PLAID_ACCESS_MODE,
   PLAID_COUNTRY_CODES,
 } from "@/lib/plaid";
+import { safeClientError } from "@/lib/safe-error";
 
 export const runtime = "nodejs";
 
@@ -42,9 +43,8 @@ export async function POST() {
       optional_products,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Plaid error";
     return NextResponse.json(
-      { error: message, access_mode: PLAID_ACCESS_MODE },
+      { error: safeClientError(err, "Plaid error"), access_mode: PLAID_ACCESS_MODE },
       { status: 500 }
     );
   }

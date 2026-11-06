@@ -1,6 +1,6 @@
 "use strict";
 
-const { app, BrowserWindow, dialog, Menu } = require("electron");
+const { app, BrowserWindow, dialog, Menu, session, shell } = require("electron");
 const { spawn } = require("child_process");
 const fs = require("fs");
 const http = require("http");
@@ -9,6 +9,11 @@ const os = require("os");
 const path = require("path");
 
 const PLAID_KEYS = ["PLAID_CLIENT_ID", "PLAID_SECRET", "PLAID_ENV"];
+const LOG_SECRET_KEYS = ["PLAID_CLIENT_ID", "PLAID_SECRET"];
+
+if (process.platform !== "win32") {
+  process.umask(0o077);
+}
 
 let mainWindow = null;
 let serverProcess = null;
@@ -34,8 +39,38 @@ function databasePath() {
   return path.join(app.getPath("userData"), "anchored.db");
 }
 
+function restrictFile(file) {
+  try {
+    if (fs.existsSync(file)) fs.chmodSync(file, 0o600);
+  } catch {
+    // Windows profile ACLs, or a file whose mode cannot be changed.
+  }
+}
+
+function restrictDataRoot(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+  if (process.platform === "win32") return;
+  if (path.basename(dir) !== "Anchored") return;
+  if (dir === path.parse(dir).root) return;
+  try {
+    fs.chmodSync(dir, 0o700);
+  } catch {
+    // The directory is still usable.
+  }
+}
+
+function redactOutput(text, env) {
+  let out = String(text);
+  for (const key of LOG_SECRET_KEYS) {
+    const value = env && env[key];
+    if (typeof value === "string" && value.length >= 8) out = out.split(value).join("[redacted]");
+  }
+  return out.replace(/access-(?:sandbox|development|production)-[A-Za-z0-9_-]+/g, "[redacted]");
+}
+
 function readPlaidEnv(file) {
   if (!fs.existsSync(file)) return {};
+  restrictFile(file);
   const allowed = new Set(PLAID_KEYS);
   const out = {};
   const text = fs.readFileSync(file, "utf8");
@@ -61,11 +96,14 @@ function readPlaidEnv(file) {
 function getFreePort() {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
-    server.once("error", reject);
+    const fail = (err) => {
+      server.close(() => reject(err));
+    };
+    server.once("error", fail);
     server.listen(0, "127.0.0.1", () => {
       const address = server.address();
       const port = typeof address === "object" && address ? address.port : 0;
-      server.close(() => resolve(port));
+      server.close((err) => (err ? reject(err) : resolve(port)));
     });
   });
 }
@@ -73,50 +111,84 @@ function getFreePort() {
 function waitForHttp(port, timeoutMs) {
   const started = Date.now();
   return new Promise((resolve, reject) => {
+    let settled = false;
+    let timer = null;
+    let active = null;
+    const finish = (err) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (active) {
+        active.destroy();
+        active = null;
+      }
+      if (err) reject(err);
+      else resolve();
+    };
+    const schedule = () => {
+      if (settled || timer) return;
+      if (Date.now() - started > timeoutMs) {
+        finish(new Error("Anchored took too long to start."));
+        return;
+      }
+      timer = setTimeout(() => {
+        timer = null;
+        attempt();
+      }, 300);
+    };
     const attempt = () => {
+      if (settled) return;
       if (serverProcess && serverProcess.spawnError) {
-        reject(serverProcess.spawnError);
+        finish(serverProcess.spawnError);
         return;
       }
       if (serverProcess && serverProcess.exitCode != null) {
-        reject(new Error("Anchored server stopped before the window could open."));
+        finish(new Error("Anchored server stopped before the window could open."));
         return;
       }
       const req = http.get({ hostname: "127.0.0.1", port, path: "/", timeout: 2000 }, (res) => {
         res.resume();
-        if (res.statusCode && res.statusCode < 500) {
-          resolve();
-          return;
-        }
-        retry();
+        active = null;
+        if (res.statusCode && res.statusCode < 500) finish();
+        else schedule();
       });
-      req.on("error", retry);
+      active = req;
+      req.on("error", () => {
+        if (active === req) active = null;
+        schedule();
+      });
       req.on("timeout", () => {
         req.destroy();
-        retry();
       });
-    };
-    const retry = () => {
-      if (Date.now() - started > timeoutMs) {
-        reject(new Error("Anchored took too long to start."));
-        return;
-      }
-      setTimeout(attempt, 300);
     };
     attempt();
   });
 }
 
 function openLog() {
-  fs.mkdirSync(app.getPath("userData"), { recursive: true });
-  serverLog = fs.createWriteStream(path.join(app.getPath("userData"), "server.log"), { flags: "a" });
+  const dir = app.getPath("userData");
+  restrictDataRoot(dir);
+  const logPath = path.join(dir, "server.log");
+  try {
+    if (fs.existsSync(logPath) && fs.statSync(logPath).size > 1024 * 1024) {
+      const previous = logPath + ".1";
+      fs.rmSync(previous, { force: true });
+      fs.renameSync(logPath, previous);
+      restrictFile(previous);
+    }
+  } catch {
+    // Keep appending to the current log.
+  }
+  serverLog = fs.createWriteStream(logPath, { flags: "a" });
+  serverLog.on("error", () => {});
+  restrictFile(logPath);
   serverLog.write(`\n--- ${new Date().toISOString()} ---\n`);
 }
 
-function rememberOutput(child) {
+function rememberOutput(child, env) {
   let tail = "";
   const take = (chunk) => {
-    const text = chunk.toString();
+    const text = redactOutput(chunk.toString(), env);
     tail = (tail + text).slice(-4000);
     child.outputTail = tail;
     if (serverLog) serverLog.write(text);
@@ -150,7 +222,7 @@ function spawnServer(command, args, env, cwd) {
   child.on("error", (err) => {
     child.spawnError = err;
   });
-  rememberOutput(child);
+  rememberOutput(child, env);
   return child;
 }
 
@@ -205,17 +277,94 @@ function killServer() {
   }
 }
 
-function isAllowedUrl(url) {
+function isAppUrl(url, port) {
   try {
     const parsed = new URL(url);
-    if (parsed.protocol === "http:" && (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost")) {
-      return true;
-    }
-    if (parsed.protocol !== "https:") return false;
-    return parsed.hostname === "plaid.com" || parsed.hostname.endsWith(".plaid.com");
+    return (
+      parsed.protocol === "http:" &&
+      parsed.hostname === "127.0.0.1" &&
+      parsed.port === String(port) &&
+      !parsed.username &&
+      !parsed.password
+    );
   } catch {
     return false;
   }
+}
+
+function isPlaidHttps(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") return false;
+    if (parsed.username || parsed.password) return false;
+    if (parsed.port && parsed.port !== "443") return false;
+    const host = parsed.hostname.toLowerCase();
+    return host === "plaid.com" || host.endsWith(".plaid.com");
+  } catch {
+    return false;
+  }
+}
+
+function isAllowedFrameUrl(url, isMainFrame, port) {
+  if (!isMainFrame && url === "about:blank") return true;
+  if (isMainFrame) return isAppUrl(url, port);
+  return isAppUrl(url, port) || isPlaidHttps(url);
+}
+
+function navigationTarget(details, url, isMainFrame) {
+  if (details && typeof details.url === "string") {
+    return {
+      event: details,
+      url: details.url,
+      isMainFrame: details.isMainFrame !== false,
+    };
+  }
+  return {
+    event: details,
+    url,
+    isMainFrame: isMainFrame !== false,
+  };
+}
+
+function hardenContents(contents, port) {
+  contents.setWindowOpenHandler(({ url }) => {
+    // The OS browser only. A new Electron window would not keep the app sandbox.
+    if (isPlaidHttps(url)) {
+      shell.openExternal(url).catch(() => {});
+    }
+    return { action: "deny" };
+  });
+
+  const guard = (event, url, isMainFrame) => {
+    const isAppWindow = mainWindow && contents === mainWindow.webContents;
+    if (isAppWindow) {
+      if (!isAllowedFrameUrl(url, isMainFrame, port)) event.preventDefault();
+      return;
+    }
+    if (!isPlaidHttps(url) && url !== "about:blank") event.preventDefault();
+  };
+
+  const onNavigate = (details, url, _isInPlace, isMainFrame) => {
+    const nav = navigationTarget(details, url, isMainFrame);
+    guard(nav.event, nav.url, nav.isMainFrame);
+  };
+
+  contents.on("will-navigate", onNavigate);
+  contents.on("will-redirect", onNavigate);
+  contents.on("will-frame-navigate", onNavigate);
+  contents.on("will-attach-webview", (event) => {
+    event.preventDefault();
+  });
+}
+
+function installContentGuards(port) {
+  session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => {
+    callback(false);
+  });
+  session.defaultSession.setPermissionCheckHandler(() => false);
+  app.on("web-contents-created", (_event, contents) => {
+    hardenContents(contents, port);
+  });
 }
 
 async function createWindow(port) {
@@ -232,21 +381,17 @@ async function createWindow(port) {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
+      nodeIntegrationInWorker: false,
+      nodeIntegrationInSubFrames: false,
       sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      navigateOnDragDrop: false,
     },
   });
 
   mainWindow.once("ready-to-show", () => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
-  });
-
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (isAllowedUrl(url)) return { action: "allow" };
-    return { action: "deny" };
-  });
-
-  mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (!isAllowedUrl(url)) event.preventDefault();
   });
 
   const loading =
@@ -262,9 +407,10 @@ async function createWindow(port) {
 async function start() {
   Menu.setApplicationMenu(null);
   openLog();
-  fs.mkdirSync(path.dirname(databasePath()), { recursive: true });
+  restrictDataRoot(path.dirname(databasePath()));
 
   const port = await getFreePort();
+  installContentGuards(port);
   try {
     serverProcess = app.isPackaged ? startPackagedServer(port) : startDevServer(port);
   } catch (err) {

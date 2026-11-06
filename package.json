@@ -5,9 +5,9 @@
   "description": "Local personal finance for Windows — its own window, SQLite on your PC",
   "main": "electron/main.cjs",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --hostname 127.0.0.1",
     "build": "next build",
-    "start": "next start",
+    "start": "next start --hostname 127.0.0.1",
     "seed": "tsx scripts/seed.ts",
     "db:reset": "tsx scripts/reset-db.ts",
     "desktop:dev": "electron .",
@@ -16,12 +16,13 @@
   "dependencies": {
     "better-sqlite3": "^13.0.3",
     "date-fns": "^4.4.0",
-    "next": "^15.5.27",
+    "next": "^15.5.29",
     "plaid": "^48.0.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-plaid-link": "^5.0.0",
     "recharts": "^3.10.1",
+    "server-only": "^0.0.1",
     "uuid": "^14.0.3",
     "zod": "^4.6.7"
   },
@@ -32,11 +33,14 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/uuid": "^10.0.0",
-    "postcss": "^8.5.29",
-    "tailwindcss": "^4.3.3",
     "electron": "^45.0.0",
     "electron-builder": "^26.0.12",
+    "postcss": "^8.5.29",
+    "tailwindcss": "^4.3.3",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "follow-redirects": "1.16.2"
   }
 }

@@ -7,6 +7,7 @@ import {
   mapPlaidAccountType,
   PLAID_ACCESS_MODE,
 } from "@/lib/plaid";
+import { safeClientError } from "@/lib/safe-error";
 
 export const runtime = "nodejs";
 
@@ -15,11 +16,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Plaid not configured" }, { status: 400 });
   }
 
-  const body = await req.json();
-  const publicToken = body?.public_token as string | undefined;
-  if (!publicToken) {
+  const body = await req.json().catch(() => null);
+  const publicToken = typeof body?.public_token === "string" ? body.public_token : "";
+  if (!publicToken || publicToken.length > 512) {
     return NextResponse.json({ error: "public_token required" }, { status: 400 });
   }
+  const institutionNameFromClient =
+    typeof body?.institution?.name === "string" ? body.institution.name.slice(0, 200) : "";
 
   try {
     const client = getPlaidClient();
@@ -29,7 +32,7 @@ export async function POST(req: NextRequest) {
 
     const accountsRes = await client.accountsGet({ access_token: accessToken });
     const institutionName =
-      body?.institution?.name ||
+      institutionNameFromClient ||
       accountsRes.data.item.institution_id ||
       "Linked institution";
 
@@ -105,8 +108,7 @@ export async function POST(req: NextRequest) {
       read_only: true,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Exchange failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: safeClientError(err, "Exchange failed") }, { status: 500 });
   }
 }
 
@@ -118,6 +120,7 @@ async function syncTransactions(accessToken: string, plaidItemRowId: string) {
 
   let cursor: string | undefined = undefined;
   let hasMore = true;
+  let pages = 0;
 
   const accountMap = new Map(
     (
@@ -127,7 +130,8 @@ async function syncTransactions(accessToken: string, plaidItemRowId: string) {
     ).map((a) => [a.plaid_account_id, a.id])
   );
 
-  while (hasMore) {
+  while (hasMore && pages < 50) {
+    pages += 1;
     const res = await client.transactionsSync({
       access_token: accessToken,
       cursor,
