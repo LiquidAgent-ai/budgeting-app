@@ -100,9 +100,9 @@ function stageStandalone() {
     fs.cpSync(publicSrc, path.join(stage, "public"), { recursive: true, dereference: true });
   }
 
-  const sqlite = path.join(stage, "node_modules", "better-sqlite3");
+  const sqlite = path.join(stage, "node_modules", "better-sqlite3-multiple-ciphers");
   if (!fs.existsSync(sqlite)) {
-    console.error("Standalone output is missing better-sqlite3. The Windows app cannot open its database.");
+    console.error("Standalone output is missing SQLCipher. The Windows app cannot open its database.");
     process.exit(1);
   }
 

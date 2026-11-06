@@ -1,7 +1,8 @@
 "use strict";
 
-const { app, BrowserWindow, dialog, Menu, session, shell } = require("electron");
+const { app, BrowserWindow, dialog, Menu, safeStorage, session, shell } = require("electron");
 const { spawn } = require("child_process");
+const crypto = require("crypto");
 const fs = require("fs");
 const http = require("http");
 const net = require("net");
@@ -9,7 +10,7 @@ const os = require("os");
 const path = require("path");
 
 const PLAID_KEYS = ["PLAID_CLIENT_ID", "PLAID_SECRET", "PLAID_ENV"];
-const LOG_SECRET_KEYS = ["PLAID_CLIENT_ID", "PLAID_SECRET"];
+const LOG_SECRET_KEYS = ["PLAID_CLIENT_ID", "PLAID_SECRET", "DATABASE_KEY"];
 
 if (process.platform !== "win32") {
   process.umask(0o077);
@@ -18,6 +19,7 @@ if (process.platform !== "win32") {
 let mainWindow = null;
 let serverProcess = null;
 let serverLog = null;
+let databaseKey = null;
 
 function dataRoot() {
   if (process.platform === "win32") {
@@ -37,6 +39,48 @@ app.setAppUserModelId("app.anchored.desktop");
 
 function databasePath() {
   return path.join(app.getPath("userData"), "anchored.db");
+}
+
+function databaseKeyPath() {
+  return path.join(app.getPath("userData"), "db-key.bin");
+}
+
+// The Windows app creates a random key and seals it with the OS credential
+// store (DPAPI on Windows). The user does not choose or type it. The sealed
+// blob is useless on another account or another PC.
+function loadOrCreateDatabaseKey() {
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error(
+      "Anchored cannot unlock its database because this computer's credential store is unavailable. The database was not opened."
+    );
+  }
+  const file = databaseKeyPath();
+  restrictDataRoot(path.dirname(file));
+  if (fs.existsSync(file)) {
+    let key = "";
+    try {
+      key = safeStorage.decryptString(fs.readFileSync(file));
+    } catch {
+      throw new Error(
+        "Anchored could not read the database key from the OS credential store. The database was not opened."
+      );
+    }
+    if (!key || key.trim().length < 16) {
+      throw new Error(
+        "Anchored could not read the database key from the OS credential store. The database was not opened."
+      );
+    }
+    restrictFile(file);
+    return key;
+  }
+  const key = crypto.randomBytes(32).toString("base64url");
+  const wrapped = safeStorage.encryptString(key);
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, wrapped, { mode: 0o600 });
+  restrictFile(tmp);
+  fs.renameSync(tmp, file);
+  restrictFile(file);
+  return key;
 }
 
 function restrictFile(file) {
@@ -198,9 +242,13 @@ function rememberOutput(child, env) {
 }
 
 function childEnv(port) {
+  if (!databaseKey) {
+    throw new Error("The database key is not available. Anchored did not start the server.");
+  }
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
   env.DATABASE_PATH = databasePath();
+  env.DATABASE_KEY = databaseKey;
   env.PORT = String(port);
   env.HOSTNAME = "127.0.0.1";
   env.HOST = "127.0.0.1";
@@ -408,6 +456,17 @@ async function start() {
   Menu.setApplicationMenu(null);
   openLog();
   restrictDataRoot(path.dirname(databasePath()));
+
+  try {
+    databaseKey = loadOrCreateDatabaseKey();
+  } catch (err) {
+    dialog.showErrorBox(
+      "Anchored could not start",
+      err instanceof Error ? err.message : "The database key could not be opened."
+    );
+    app.quit();
+    return;
+  }
 
   const port = await getFreePort();
   installContentGuards(port);

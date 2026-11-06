@@ -35,18 +35,42 @@ The installed app, and the desktop window you open while developing, store the d
 
 Updating or uninstalling the app leaves that file in place.
 
-On a Mac or Linux PC, Anchored limits that database file, `plaid.env`, and the server log to your user account. On Windows, those files live in your user profile, which other accounts on the PC cannot read. Someone who can already use the computer as you can still open the database. Anchored does not claim to hide data from the person at the keyboard.
+On a Mac or Linux PC, Anchored limits that database file, `plaid.env`, and the server log to your user account. On Windows, those files live in your user profile, which other accounts on the PC cannot read.
 
-The first time you open the dashboard on a new install, Anchored loads a demo household so the screens are not empty. If the database file was already there when the app started, it is left alone, even if you deleted every account.
+The database file is encrypted. A normal SQLite program cannot read it. Someone signed in as you can still open Anchored and see the books, because the app can unlock the file for that account. Copying the file to another person or another computer does not give them the books.
+
+The first time you open the dashboard on a new install, Anchored loads a demo household so the screens are not empty. If the database file was already there when the app started, it is left alone, even if you deleted every account. An older file that is not encrypted yet is encrypted the first time this version opens it. The accounts and transactions stay, and the unprotected copy is removed.
 
 `npm run dev` uses `data/anchored.db` inside this folder, unless you set `DATABASE_PATH` to another full path. The server and any future container keep using `DATABASE_PATH` the same way. The Windows app sets it to the file above.
 
 If the window says Anchored could not start, look at `%APPDATA%\Anchored\server.log`.
 
+## The database key
+
+Anchored will not create or open the database when the key is missing or wrong, and it will not replace a file it cannot unlock.
+
+**Windows app.** The first time Anchored starts, it makes a random key and stores it with Windows for your account (the OS credential store). You do not choose the key, and it is not written down as text. The sealed copy is `%APPDATA%\Anchored\db-key.bin`. The next time you sign in as the same user on the same PC, Anchored unlocks the database by itself.
+
+There is no password to look up or reset. If you delete `db-key.bin`, or you copy only `anchored.db` to another PC or another Windows account, the books cannot be opened. The sealed key works for this Windows user on this PC. It does not work anywhere else.
+
+**This folder, a server, or Docker.** You supply the key. Put a long random string in `.env.local` as `DATABASE_KEY` (copy `.env.example` and replace `your_database_key`). Keep that same string somewhere safe, such as a password manager. For a container, pass the same value every time the container starts:
+
+```bash
+docker run -e DATABASE_KEY="the-same-long-random-string" -e DATABASE_PATH=/data/anchored.db ...
+```
+
+If `DATABASE_KEY` is missing or different from the one that encrypted the file, Anchored refuses to open it. Anchored does not keep a second copy. If you lose the string, the data cannot be recovered.
+
 ## Browser, while you are developing
 
 ```bash
 npm install
+cp .env.example .env.local
+```
+
+Edit `.env.local` and set `DATABASE_KEY` to a long random string. Then:
+
+```bash
 npm run dev
 ```
 

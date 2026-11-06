@@ -1,13 +1,18 @@
-import Database from "better-sqlite3";
+import Database from "better-sqlite3-multiple-ciphers";
 import fs from "fs";
 import path from "path";
 
+type SqliteDb = InstanceType<typeof Database>;
+
 type DbGlobal = typeof globalThis & {
-  __anchoredDb?: Database.Database;
+  __anchoredDb?: SqliteDb;
   __anchoredDbPath?: string;
   __anchoredDbUmask?: boolean;
   __anchoredDbExitHook?: boolean;
 };
+
+const PLAINTEXT_MAGIC = Buffer.from("SQLite format 3\0", "utf8");
+const KEY_PLACEHOLDER = "your_database_key";
 
 function dbGlobal(): DbGlobal {
   return globalThis as DbGlobal;
@@ -48,8 +53,49 @@ function closeStoredDb() {
   }
 }
 
+function assignEnvFromFile(file: string) {
+  if (!fs.existsSync(file)) return;
+  const text = fs.readFileSync(file, "utf8");
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq <= 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    if (key !== "DATABASE_KEY" && key !== "DATABASE_PATH") continue;
+    if (process.env[key]?.trim()) continue;
+    let value = trimmed.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (value) process.env[key] = value;
+  }
+}
+
+/** Fill DATABASE_KEY and DATABASE_PATH from .env.local when the process did not set them. */
+function loadLocalDatabaseEnv() {
+  if (process.env.DATABASE_KEY?.trim() && process.env.DATABASE_PATH?.trim()) return;
+  assignEnvFromFile(path.join(process.cwd(), ".env.local"));
+  assignEnvFromFile(path.join(process.cwd(), ".env"));
+}
+
+function databaseKey(): Buffer {
+  loadLocalDatabaseEnv();
+  const value = process.env.DATABASE_KEY?.trim() ?? "";
+  if (value.length < 16 || value === KEY_PLACEHOLDER) {
+    throw new Error(
+      "DATABASE_KEY is missing. Anchored will not open or create the database. Set a long random DATABASE_KEY in the environment or in .env.local."
+    );
+  }
+  return Buffer.from(value, "utf8");
+}
+
 /** SQLite file for this process. `DATABASE_PATH` wins; otherwise `data/anchored.db`. */
 export function resolveDatabasePath(): string {
+  loadLocalDatabaseEnv();
   const configured = process.env.DATABASE_PATH?.trim();
   if (configured) return path.resolve(configured);
   return path.join(process.cwd(), "data", "anchored.db");
@@ -80,7 +126,189 @@ export function databaseExistedAtStartup(): boolean {
 // Record this before any route opens the file. Later imports reuse globalThis.
 databaseExistedAtStartup();
 
-function migrate(db: Database.Database) {
+function isPlaintextDatabase(dbPath: string): boolean {
+  let fd: number | null = null;
+  try {
+    const size = fs.statSync(dbPath).size;
+    if (size < PLAINTEXT_MAGIC.length) return false;
+    fd = fs.openSync(dbPath, "r");
+    const header = Buffer.alloc(PLAINTEXT_MAGIC.length);
+    const read = fs.readSync(fd, header, 0, header.length, 0);
+    return read === header.length && header.equals(PLAINTEXT_MAGIC);
+  } catch {
+    return false;
+  } finally {
+    if (fd != null) fs.closeSync(fd);
+  }
+}
+
+function tableCounts(db: SqliteDb): Map<string, number> {
+  const tables = db
+    .prepare(
+      `SELECT name FROM sqlite_master
+       WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`
+    )
+    .all() as { name: string }[];
+  const counts = new Map<string, number>();
+  for (const table of tables) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(table.name)) {
+      throw new Error("The database has a table Anchored cannot migrate. The original file was left unchanged.");
+    }
+    const row = db.prepare(`SELECT count(*) AS c FROM "${table.name}"`).get() as { c: number };
+    counts.set(table.name, Number(row.c));
+  }
+  return counts;
+}
+
+function sameCounts(left: Map<string, number>, right: Map<string, number>): boolean {
+  if (left.size !== right.size) return false;
+  for (const [name, count] of left) {
+    if (right.get(name) !== count) return false;
+  }
+  return true;
+}
+
+function applyKey(db: SqliteDb, key: Buffer) {
+  db.pragma("cipher = 'sqlcipher'");
+  db.pragma("legacy = 4");
+  db.key(key);
+}
+
+function openEncrypted(dbPath: string, key: Buffer): SqliteDb {
+  const db = new Database(dbPath, { fileMustExist: true });
+  try {
+    applyKey(db, key);
+    db.prepare("SELECT count(*) AS c FROM sqlite_master").get();
+    return db;
+  } catch (err) {
+    try {
+      db.close();
+    } catch {
+      // already closed
+    }
+    throw err;
+  }
+}
+
+function removeSidecars(dbPath: string) {
+  for (const suffix of ["-wal", "-shm"]) fs.rmSync(dbPath + suffix, { force: true });
+}
+
+/**
+ * Copy a plaintext database to a SQLCipher file, check the rows survived,
+ * then replace the original. The plaintext file stays in place until that check passes.
+ */
+function migratePlaintextDatabase(dbPath: string, key: Buffer) {
+  const plain = new Database(dbPath, { fileMustExist: true });
+  let before: Map<string, number>;
+  try {
+    const checkpoint = plain.pragma("wal_checkpoint(TRUNCATE)") as { busy: number }[];
+    if (checkpoint.some((row) => row.busy !== 0)) {
+      throw new Error("The database is in use, so it was not encrypted. The original file was left unchanged.");
+    }
+    before = tableCounts(plain);
+  } finally {
+    plain.close();
+  }
+
+  const tmp = `${dbPath}.encrypting`;
+  const bak = `${dbPath}.plaintext-bak`;
+  fs.rmSync(tmp, { force: true });
+  removeSidecars(tmp);
+  fs.copyFileSync(dbPath, tmp);
+  restrictPrivateFile(tmp);
+
+  const migrated = new Database(tmp);
+  try {
+    migrated.pragma("cipher = 'sqlcipher'");
+    migrated.pragma("legacy = 4");
+    if (migrated.rekey(key) !== 0) {
+      throw new Error("Could not encrypt the existing database. The original file was left unchanged.");
+    }
+    const after = tableCounts(migrated);
+    const quick = migrated.pragma("quick_check", { simple: true });
+    if (!sameCounts(before, after) || quick !== "ok") {
+      throw new Error(
+        "Encrypting the database would have changed its data. The original file was left unchanged."
+      );
+    }
+    migrated.pragma("wal_checkpoint(TRUNCATE)");
+  } catch (err) {
+    try {
+      migrated.close();
+    } catch {
+      // already closed
+    }
+    fs.rmSync(tmp, { force: true });
+    removeSidecars(tmp);
+    if (err instanceof Error && /left unchanged|restored/.test(err.message)) throw err;
+    throw new Error("Could not encrypt the existing database. The original file was left unchanged.");
+  }
+  migrated.close();
+  removeSidecars(tmp);
+
+  if (isPlaintextDatabase(tmp)) {
+    fs.rmSync(tmp, { force: true });
+    throw new Error("Encryption did not protect the database file. The original file was left unchanged.");
+  }
+
+  if (fs.existsSync(bak)) fs.rmSync(bak, { force: true });
+  fs.renameSync(dbPath, bak);
+  restrictPrivateFile(bak);
+  removeSidecars(dbPath);
+  try {
+    fs.renameSync(tmp, dbPath);
+    restrictPrivateFile(dbPath);
+    const verify = openEncrypted(dbPath, key);
+    try {
+      const after = tableCounts(verify);
+      if (!sameCounts(before, after)) {
+        throw new Error("The encrypted database did not match the original. The original file was restored.");
+      }
+    } finally {
+      verify.close();
+    }
+  } catch (err) {
+    try {
+      fs.rmSync(dbPath, { force: true });
+    } catch {
+      // the encrypted file may already be gone
+    }
+    removeSidecars(dbPath);
+    if (fs.existsSync(bak)) fs.renameSync(bak, dbPath);
+    fs.rmSync(tmp, { force: true });
+    removeSidecars(tmp);
+    if (err instanceof Error && /left unchanged|restored/.test(err.message)) throw err;
+    throw new Error("The encrypted database did not match the original. The original file was restored.");
+  }
+
+  fs.rmSync(bak, { force: true });
+  removeSidecars(bak);
+  restrictDatabaseFiles(dbPath);
+}
+
+function recoverInterruptedEncryption(dbPath: string) {
+  const bak = `${dbPath}.plaintext-bak`;
+  const tmp = `${dbPath}.encrypting`;
+  const mainReady = fs.existsSync(dbPath) && fs.statSync(dbPath).size > 0;
+  if (!mainReady && fs.existsSync(tmp) && !isPlaintextDatabase(tmp)) {
+    if (fs.existsSync(dbPath)) fs.rmSync(dbPath, { force: true });
+    fs.renameSync(tmp, dbPath);
+    restrictPrivateFile(dbPath);
+    return;
+  }
+  if (!mainReady && fs.existsSync(bak)) {
+    if (fs.existsSync(dbPath)) fs.rmSync(dbPath, { force: true });
+    fs.renameSync(bak, dbPath);
+    restrictPrivateFile(dbPath);
+  }
+  if (fs.existsSync(tmp)) {
+    fs.rmSync(tmp, { force: true });
+    removeSidecars(tmp);
+  }
+}
+
+function migrate(db: SqliteDb) {
   db.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
@@ -157,9 +385,51 @@ function migrate(db: Database.Database) {
   }
 }
 
-export function getDb(): Database.Database {
+function openDatabase(dbPath: string, key: Buffer): SqliteDb {
+  recoverInterruptedEncryption(dbPath);
+  if (fs.existsSync(dbPath) && fs.statSync(dbPath).size === 0) {
+    fs.rmSync(dbPath, { force: true });
+  }
+  if (fs.existsSync(dbPath) && isPlaintextDatabase(dbPath)) {
+    migratePlaintextDatabase(dbPath, key);
+  }
+
+  if (!fs.existsSync(dbPath)) {
+    const created = new Database(dbPath);
+    try {
+      applyKey(created, key);
+      created.prepare("SELECT count(*) AS c FROM sqlite_master").get();
+      restrictPrivateFile(dbPath);
+      return created;
+    } catch (err) {
+      try {
+        created.close();
+      } catch {
+        // already closed
+      }
+      if (fs.existsSync(dbPath) && (fs.statSync(dbPath).size === 0 || isPlaintextDatabase(dbPath))) {
+        fs.rmSync(dbPath, { force: true });
+      }
+      throw new Error("The database could not be created. Anchored did not leave it open.");
+    }
+  }
+
+  try {
+    const db = openEncrypted(dbPath, key);
+    const bak = `${dbPath}.plaintext-bak`;
+    if (fs.existsSync(bak)) fs.rmSync(bak, { force: true });
+    return db;
+  } catch {
+    throw new Error(
+      "The database could not be opened with DATABASE_KEY. Anchored left the file in place and did not replace it."
+    );
+  }
+}
+
+export function getDb(): SqliteDb {
   databaseExistedAtStartup();
   usePrivateUmask();
+  const key = databaseKey();
   const g = dbGlobal();
   const dbPath = resolveDatabasePath();
   if (g.__anchoredDb && g.__anchoredDbPath === dbPath && g.__anchoredDb.open) {
@@ -195,7 +465,7 @@ export function getDb(): Database.Database {
     });
   }
 
-  const db = new Database(dbPath);
+  const db = openDatabase(dbPath, key);
   g.__anchoredDb = db;
   g.__anchoredDbPath = dbPath;
   migrate(db);
@@ -206,8 +476,9 @@ export function getDb(): Database.Database {
 export function resetDb() {
   const dbPath = resolveDatabasePath();
   closeStoredDb();
-  for (const suffix of ["", "-wal", "-shm"]) {
-    const p = dbPath + suffix;
-    if (fs.existsSync(p)) fs.unlinkSync(p);
+  for (const suffix of ["", "-wal", "-shm", ".plaintext-bak", ".encrypting"]) {
+    fs.rmSync(dbPath + suffix, { force: true });
   }
+  removeSidecars(`${dbPath}.plaintext-bak`);
+  removeSidecars(`${dbPath}.encrypting`);
 }
