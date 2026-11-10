@@ -3,12 +3,17 @@ import type { NextRequest } from "next/server";
 import { requestIsBlocked } from "@/lib/local-access";
 
 export function middleware(request: NextRequest) {
+  // The Node server sets this after it drops any client-supplied value.
+  // It tells middleware that this process is the container behind the proxy.
+  const container = request.headers.get("x-anchored-container") === "1";
   if (
     requestIsBlocked({
       host: request.headers.get("host"),
       origin: request.headers.get("origin"),
       site: request.headers.get("sec-fetch-site"),
       pathname: request.nextUrl.pathname,
+      forwardedProto: request.headers.get("x-forwarded-proto"),
+      container,
     })
   ) {
     return new NextResponse("Forbidden", {

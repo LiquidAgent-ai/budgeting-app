@@ -2,7 +2,7 @@
 
 Anchored is a personal finance app that stays on your computer. This is the Windows app. It opens its own window and keeps your books in a SQLite file on that PC. You do not start a separate dev server to use the installed app.
 
-A TrueNAS or other container install would be a different way to run Anchored. It is not this Windows app, and those container files are not part of this project.
+You can also run Anchored in one container with Podman or Docker, including on TrueNAS. That is separate from the Windows app. The steps are in [Run it in a container](#run-it-in-a-container).
 
 ## Install
 
@@ -41,7 +41,7 @@ The database file is encrypted. A normal SQLite program cannot read it. Someone 
 
 The first time you open the dashboard on a new install, Anchored loads a demo household so the screens are not empty. If the database file was already there when the app started, it is left alone, even if you deleted every account. An older file that is not encrypted yet is encrypted the first time this version opens it. The accounts and transactions stay, and the unprotected copy is removed.
 
-`npm run dev` uses `data/anchored.db` inside this folder, unless you set `DATABASE_PATH` to another full path. The server and any future container keep using `DATABASE_PATH` the same way. The Windows app sets it to the file above.
+`npm run dev` uses `data/anchored.db` inside this folder, unless you set `DATABASE_PATH` to another full path. The container uses `/data/anchored.db` unless you set `DATABASE_PATH`. The Windows app sets the path to the file above.
 
 If the window says Anchored could not start, look at `%APPDATA%\Anchored\server.log`.
 
@@ -53,13 +53,102 @@ Anchored will not create or open the database when the key is missing or wrong, 
 
 There is no password to look up or reset. If you delete `db-key.bin`, or you copy only `anchored.db` to another PC or another Windows account, the books cannot be opened. The sealed key works for this Windows user on this PC. It does not work anywhere else.
 
-**This folder, a server, or Docker.** You supply the key. Put a long random string in `.env.local` as `DATABASE_KEY` (copy `.env.example` and replace `your_database_key`). Keep that same string somewhere safe, such as a password manager. For a container, pass the same value every time the container starts:
-
-```bash
-docker run -e DATABASE_KEY="the-same-long-random-string" -e DATABASE_PATH=/data/anchored.db ...
-```
+**This folder, or a container.** You supply the key. Put a long random string in `.env.local` as `DATABASE_KEY` (copy `.env.example` and replace `your_database_key`). Keep that same string somewhere safe, such as a password manager. For a container, pass the same value every time the container starts. Do not put the key in the image. The commands are in [Run it in a container](#run-it-in-a-container).
 
 If `DATABASE_KEY` is missing or different from the one that encrypted the file, Anchored refuses to open it. Anchored does not keep a second copy. If you lose the string, the data cannot be recovered.
+
+## Run it in a container
+
+The container is one way to run Anchored on TrueNAS, Podman, or Docker. Your books stay in a database file on a disk you choose. The file is encrypted with `DATABASE_KEY`.
+
+`npm run dev` and `npm start` stay on this computer. They listen on 127.0.0.1 only. The container does not change that.
+
+Inside the container, Anchored listens on port 3000 so the published port works. Nginx Proxy Manager reaches Anchored through that published port. Do not point the proxy at the dev server, and do not turn on host networking.
+
+Make a long random string and keep it. You will pass it as `DATABASE_KEY` every time. If it is missing, still the example placeholder, or shorter than 16 characters, the container will not start.
+
+### Podman
+
+Build the image, then start it. Replace the dataset path with yours, and replace the key:
+
+```bash
+podman build -t anchored .
+
+podman run -d --name anchored \
+  --restart unless-stopped \
+  -p 3000:3000 \
+  -v /mnt/tank/anchored:/data \
+  -e DATABASE_KEY='paste-a-long-random-string' \
+  -e PUID=568 \
+  -e PGID=568 \
+  anchored
+```
+
+### Docker
+
+```bash
+docker build -t anchored .
+
+docker run -d --name anchored \
+  --restart unless-stopped \
+  -p 3000:3000 \
+  -v /mnt/tank/anchored:/data \
+  -e DATABASE_KEY='paste-a-long-random-string' \
+  -e PUID=568 \
+  -e PGID=568 \
+  anchored
+```
+
+### TrueNAS dataset
+
+Create a dataset for the books, for example `/mnt/tank/anchored`. Mount that dataset at `/data` in the container. Anchored stores the encrypted file at `/data/anchored.db`.
+
+The container writes that file as user 568, group 568. That is the TrueNAS apps user. `PUID` and `PGID` default to 568 when you leave them out. `/data` has to be writable by that user.
+
+### Compose
+
+From this folder, create a file named `.env`. Compose reads it. Do not commit it.
+
+```text
+DATABASE_KEY=paste-a-long-random-string
+ANCHORED_DATA=/mnt/tank/anchored
+```
+
+`ANCHORED_DATA` is the dataset path on the machine. If you leave it out, Compose uses a named volume instead. Set `PORT=8080` in that same file if port 3000 is already taken on the host. The app inside the container still uses port 3000. The host port is the one you give to the proxy.
+
+Optional, when you browse Anchored at a public https address:
+
+```text
+APP_URL=https://budget.example.com
+```
+
+Anchored uses `APP_URL` when it needs a full link. With that set, browser calls have to come from that same address. It also honors `X-Forwarded-Proto` and `X-Forwarded-Host` from the proxy.
+
+Start it:
+
+```bash
+podman compose up -d --build
+```
+
+or:
+
+```bash
+docker compose up -d --build
+```
+
+Open `http://127.0.0.1:3000` on that machine, or the host port you set. A check of the server is `GET /api/health`.
+
+### Nginx Proxy Manager
+
+Add a proxy host that points at the published port:
+
+- Scheme: `http`
+- Forward hostname: the machine where the container is running
+- Forward port: `3000`, or the host `PORT` you published
+- Websockets: on
+- SSL: request a certificate on the proxy host
+
+Anchored itself stays on http. The proxy is what browsers use with https. The published port is how Nginx Proxy Manager reaches Anchored. You do not need to open the dev server to your network, and you do not need host networking. Do not forward port 3000 from your router to the internet. People should come in through the proxy.
 
 ## Browser, while you are developing
 
@@ -74,7 +163,7 @@ Edit `.env.local` and set `DATABASE_KEY` to a long random string. Then:
 npm run dev
 ```
 
-Open http://127.0.0.1:3000. `npm run dev` and `npm start` listen on 127.0.0.1 only, so other computers on the network cannot open the app. `localhost` still works when it points at that address.
+Open http://127.0.0.1:3000. `npm run dev` and `npm start` listen on 127.0.0.1 only, so other computers on the network cannot open the app. `localhost` still works when it points at that address. The container is the run that publishes a port. It does not change these two commands.
 
 ```bash
 npm run seed       # demo household; does not replace accounts already stored

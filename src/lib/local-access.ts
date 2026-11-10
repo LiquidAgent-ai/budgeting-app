@@ -1,8 +1,11 @@
 /**
- * Decides whether an inbound HTTP request is allowed to touch this local app.
- * The server is for the person at this computer, not for other machines and
- * not for other websites the browser happens to have open.
+ * Decides whether an inbound HTTP request is allowed to touch this app.
+ * On a PC, the server is for the person at this computer. In the container,
+ * Nginx Proxy Manager reaches the published port, so a public host is allowed.
+ * Browser calls still have to come from that same site.
  */
+
+import { appUrlOrigin, isContainerServer } from "@/lib/public-url";
 
 export function isLoopbackAddress(address: string | undefined | null): boolean {
   if (!address) return false;
@@ -42,7 +45,18 @@ function canonicalHost(host: string, protocol: string): string {
   return lower;
 }
 
-export function originMatchesHost(origin: string, hostHeader: string): boolean {
+function forwardedScheme(value: string | null | undefined): "http" | "https" | null {
+  if (!value) return null;
+  const first = value.split(",")[0]?.trim().toLowerCase().replace(/:$/, "") ?? "";
+  if (first === "http" || first === "https") return first;
+  return null;
+}
+
+export function originMatchesHost(
+  origin: string,
+  hostHeader: string,
+  forwardedProto?: string | null
+): boolean {
   let url: URL;
   try {
     url = new URL(origin);
@@ -50,6 +64,8 @@ export function originMatchesHost(origin: string, hostHeader: string): boolean {
     return false;
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  const forwarded = forwardedScheme(forwardedProto);
+  if (forwarded && url.protocol !== `${forwarded}:`) return false;
   return canonicalHost(url.host, url.protocol) === canonicalHost(hostHeader, url.protocol);
 }
 
@@ -58,8 +74,12 @@ export function requestIsBlocked(input: {
   origin: string | null;
   site: string | null;
   pathname: string;
+  forwardedProto?: string | null;
+  /** Set by the container server. Middleware must pass this through; the value is not taken from the client. */
+  container?: boolean;
 }): boolean {
-  if (!isLoopbackHost(input.host)) return true;
+  const container = input.container === true || isContainerServer();
+  if (!container && !isLoopbackHost(input.host)) return true;
 
   const path = input.pathname || "/";
   const guarded =
@@ -68,6 +88,19 @@ export function requestIsBlocked(input: {
 
   // Browsers set this. same-site still means another port on this machine.
   if (input.site && input.site !== "same-origin" && input.site !== "none") return true;
-  if (input.origin && input.host && !originMatchesHost(input.origin, input.host)) return true;
+  if (!input.origin) return false;
+
+  const pinned = container ? appUrlOrigin() : null;
+  if (pinned) {
+    try {
+      return new URL(input.origin).origin !== pinned;
+    } catch {
+      return true;
+    }
+  }
+
+  if (!input.host || !originMatchesHost(input.origin, input.host, container ? input.forwardedProto : null)) {
+    return true;
+  }
   return false;
 }
