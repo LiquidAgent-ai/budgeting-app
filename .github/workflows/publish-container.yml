@@ -1,0 +1,106 @@
+name: Publish container
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - docker/**
+      - package.json
+      - package-lock.json
+      - next.config.ts
+      - tsconfig.json
+      - postcss.config.mjs
+      - src/**
+      - public/**
+      - .github/workflows/publish-container.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-container
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/liquidagent-ai/budgeting-app
+
+jobs:
+  publish:
+    name: Build and push image
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          sbom: false
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=budgeting-app
+            org.opencontainers.image.description=Anchored
+          # DATABASE_KEY and Plaid keys stay runtime environment variables.
+          # This step passes no build-args and no secrets.
+
+      - name: Make the package public
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          api="user/packages/container/budgeting-app"
+          settings="https://github.com/users/LiquidAgent-ai/packages/container/budgeting-app/settings"
+          visibility=""
+
+          for attempt in 1 2 3 4 5 6 7 8; do
+            if visibility="$(gh api "$api" --jq .visibility 2>/dev/null)"; then
+              echo "Package visibility is ${visibility} (attempt ${attempt})."
+              break
+            fi
+            echo "Package is not in the API yet (attempt ${attempt})."
+            sleep 15
+          done
+
+          if [ "${visibility}" != "public" ]; then
+            echo "Setting visibility to public..."
+            if ! gh api --method PATCH "$api" -f visibility=public; then
+              echo "PATCH ${api} did not succeed. Trying ${api}/visibility."
+              if ! gh api --method PATCH "${api}/visibility" -f visibility=public; then
+                echo "::error title=Package is not public::GITHUB_TOKEN could not change visibility. Open ${settings} → Danger Zone → Change visibility → Public, type budgeting-app, and confirm."
+                exit 1
+              fi
+            fi
+            visibility="$(gh api "$api" --jq .visibility)"
+          fi
+
+          gh api "$api" --jq '{name,visibility,repository:.repository.full_name,html_url}'
+          if [ "$visibility" != "public" ]; then
+            echo "::error title=Package is not public::Visibility is '${visibility}'. Open ${settings} → Danger Zone → Change visibility → Public, type budgeting-app, and confirm."
+            exit 1
+          fi
