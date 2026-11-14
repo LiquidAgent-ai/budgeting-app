@@ -26,11 +26,10 @@ fi
 export PORT
 export DATABASE_PATH
 export ANCHORED_CONTAINER=1
-# Docker and Podman set HOSTNAME to the container name. Next.js listens on
-# HOSTNAME, so the name would not accept the published port. Bind all interfaces.
-export HOSTNAME=0.0.0.0
+export HOST="${HOST:-0.0.0.0}"
 
 mkdir -p /data
+cd /app
 
 drop() {
   exec setpriv --reuid "$PUID" --regid "$PGID" --clear-groups --inh-caps=-all -- "$@"
@@ -47,11 +46,11 @@ if [ "$(id -u)" = "0" ]; then
     echo "/data is not writable by user ${PUID}:${PGID}. Mount a dataset at /data that this user can write." >&2
     exit 1
   fi
-  drop node server.js
+  drop /app/anchored
 fi
 
 if [ ! -w /data ]; then
   echo "/data is not writable. Mount a dataset at /data." >&2
   exit 1
 fi
-exec node server.js
+exec /app/anchored
