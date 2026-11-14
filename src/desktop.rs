@@ -176,7 +176,10 @@ fn protect(plaintext: &[u8]) -> Result<Vec<u8>, String> {
         cbData: plaintext.len() as u32,
         pbData: plaintext.as_ptr() as *mut u8,
     };
-    let mut output = CRYPT_INTEGER_BLOB::default();
+    let mut output = CRYPT_INTEGER_BLOB {
+        cbData: 0,
+        pbData: std::ptr::null_mut(),
+    };
     let desc = [0u16];
     let ok = unsafe {
         CryptProtectData(
@@ -211,7 +214,10 @@ fn unprotect(blob: &[u8]) -> Result<String, String> {
         cbData: blob.len() as u32,
         pbData: blob.as_ptr() as *mut u8,
     };
-    let mut output = CRYPT_INTEGER_BLOB::default();
+    let mut output = CRYPT_INTEGER_BLOB {
+        cbData: 0,
+        pbData: std::ptr::null_mut(),
+    };
     let ok = unsafe {
         CryptUnprotectData(
             &input,

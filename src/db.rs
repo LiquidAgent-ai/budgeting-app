@@ -162,6 +162,10 @@ fn restrict_private_file(path: &Path) {
         use std::os::unix::fs::PermissionsExt;
         let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
     }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
 }
 
 fn restrict_database_files(path: &Path) {
