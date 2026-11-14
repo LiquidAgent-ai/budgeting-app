@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 const KEY_PLACEHOLDER: &str = "your_database_key";
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Config {
     pub database_path: PathBuf,
     pub database_key: String,
@@ -21,7 +21,10 @@ impl Config {
     pub fn from_env() -> Result<Self, String> {
         load_dotenv_keys();
 
-        let key = env::var("DATABASE_KEY").unwrap_or_default().trim().to_string();
+        let key = env::var("DATABASE_KEY")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         if key.len() < 16 || key == KEY_PLACEHOLDER {
             return Err(
                 "DATABASE_KEY is missing. Anchored will not open or create the database. Set a long random DATABASE_KEY in the environment or in .env.local."
@@ -60,7 +63,10 @@ impl Config {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty() && s != "your_sandbox_secret");
 
-        let plaid_env = match env::var("PLAID_ENV").unwrap_or_else(|_| "sandbox".into()).as_str() {
+        let plaid_env = match env::var("PLAID_ENV")
+            .unwrap_or_else(|_| "sandbox".into())
+            .as_str()
+        {
             "development" => "development".into(),
             "production" => "production".into(),
             _ => "sandbox".into(),
@@ -125,9 +131,60 @@ fn load_dotenv_keys() {
                 value = value[1..value.len() - 1].to_string();
             }
             if !value.is_empty() {
-                // SAFETY: single-threaded at startup before the server starts.
-                env::set_var(key, value);
+                // SAFETY: single-threaded at startup, before any other thread
+                // reads the environment.
+                unsafe { env::set_var(key, value) };
             }
         }
+    }
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("database_path", &self.database_path)
+            .field("database_key", &"[redacted]")
+            .field("bind_host", &self.bind_host)
+            .field("port", &self.port)
+            .field("app_url", &self.app_url)
+            .field(
+                "plaid_client_id",
+                &self.plaid_client_id.as_ref().map(|_| "[redacted]"),
+            )
+            .field(
+                "plaid_secret",
+                &self.plaid_secret.as_ref().map(|_| "[redacted]"),
+            )
+            .field("plaid_env", &self.plaid_env)
+            .field("in_container", &self.in_container)
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_does_not_include_secrets() {
+        let secret_key = "super-secret-database-key-value";
+        let plaid = "plaid-secret-value-not-for-logs";
+        let client = "plaid-client-id-value";
+        let cfg = Config {
+            database_path: PathBuf::from("data/anchored.db"),
+            database_key: secret_key.into(),
+            bind_host: "127.0.0.1".into(),
+            port: 3000,
+            app_url: None,
+            plaid_client_id: Some(client.into()),
+            plaid_secret: Some(plaid.into()),
+            plaid_env: "sandbox".into(),
+            in_container: false,
+        };
+        let text = format!("{cfg:?}");
+        assert!(!text.contains(secret_key));
+        assert!(!text.contains(plaid));
+        assert!(!text.contains(client));
+        assert!(text.contains("redacted"));
     }
 }

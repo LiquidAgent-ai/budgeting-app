@@ -1,0 +1,146 @@
+name: Windows installer
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - src/**
+      - static/**
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - windows/**
+      - .github/workflows/windows-installer.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-installer
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish Setup.exe
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.100.0
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install NASM
+        uses: ilammy/setup-nasm@v1
+
+      - name: Install Perl
+        uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: "5.38"
+
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          choco install nsis --no-progress -y
+          if ($LASTEXITCODE -eq 3010) { $global:LASTEXITCODE = 0 }
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe")) {
+            throw "NSIS was not installed"
+          }
+
+      - name: Build release binary
+        shell: pwsh
+        run: |
+          if (-not (Get-Command link.exe -ErrorAction SilentlyContinue)) {
+            $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+            $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            if (-not $vs) { throw "Visual Studio C++ tools not found" }
+            cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && set" | ForEach-Object {
+              if ($_ -match '^(.*?)=(.*)$') {
+                Set-Item -Path "Env:$($matches[1])" -Value $matches[2]
+              }
+            }
+          }
+          cargo build --release
+
+      - name: Stage installer files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist-desktop\stage\static | Out-Null
+          Copy-Item target\release\anchored.exe dist-desktop\stage\Anchored.exe
+          Copy-Item static\app.css dist-desktop\stage\static\app.css
+          if (-not (Test-Path dist-desktop\stage\Anchored.exe)) { throw "Anchored.exe missing" }
+          if (-not (Test-Path dist-desktop\stage\static\app.css)) { throw "app.css missing" }
+          $bad = Get-ChildItem dist-desktop\stage -Recurse -File | Where-Object {
+            $_.Name -eq ".env" -or $_.Name -like ".env.*" -or $_.Extension -in ".db", ".pem"
+          }
+          if ($bad) { throw "Refusing to package secrets or a database" }
+          $size = (Get-Item dist-desktop\stage\Anchored.exe).Length
+          if ($size -lt 1MB -or $size -gt 120MB) { throw "unexpected Anchored.exe size $size" }
+
+      - name: Build NSIS installer
+        shell: pwsh
+        run: |
+          $raw = Get-Content -Raw Cargo.toml
+          if ($raw -notmatch '(?m)^version\s*=\s*"([^"]+)"') { throw "Cargo.toml version missing" }
+          $version = $Matches[1]
+          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          & $makensis /NOCD "/DVERSION=$version" "windows\anchored.nsi"
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed" }
+          $setup = Get-Item "dist-desktop\Anchored-Setup-$version.exe"
+          if ($setup.Length -lt 1MB -or $setup.Length -gt 100MB) { throw "unexpected installer size $($setup.Length)" }
+          $bytes = [System.IO.File]::ReadAllBytes($setup.FullName)[0..1]
+          if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw "installer is not a Windows executable" }
+          Get-FileHash $setup.FullName -Algorithm SHA256 | Format-List
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Anchored-Setup
+          path: dist-desktop/Anchored-Setup-*.exe
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(grep -m1 '^version = ' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')"
+          tag="v${version}"
+          shopt -s nullglob
+          files=(dist-desktop/Anchored-Setup-*.exe)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "No Anchored-Setup-*.exe was produced."
+            exit 1
+          fi
+          notes="${RUNNER_TEMP}/anchored-release-notes.txt"
+          cat > "$notes" <<'EOF'
+          Double-click the Setup.exe. If Windows shows "Windows protected your PC", choose More info, then Run anyway.
+
+          The installer adds Anchored to the Start menu and the desktop. Open the Anchored shortcut. It opens its own window.
+
+          Your books stay encrypted in %APPDATA%\Anchored\anchored.db. Windows seals the database key for your account in %APPDATA%\Anchored\db-key.bin. You do not type a database key. A copy of the database file by itself cannot be read.
+
+          Uninstalling Anchored leaves %APPDATA%\Anchored in place.
+          EOF
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --notes-file "$notes" --latest
+          else
+            gh release create "$tag" "${files[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Anchored ${tag}" \
+              --notes-file "$notes" \
+              --latest
+          fi
+          name="$(basename "${files[0]}")"
+          echo "Download: https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${name}"
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY"

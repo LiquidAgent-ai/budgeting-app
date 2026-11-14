@@ -29,6 +29,10 @@ env:
 jobs:
   publish:
     name: Build and push image
+    # Windows desktop commits include "[skip container]" so they do not replace
+    # ghcr.io/liquidagent-ai/budgeting-app:latest. The installer workflow does
+    # not push an image. A normal main push still publishes this Linux image.
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip container]')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:

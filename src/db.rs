@@ -17,7 +17,8 @@ impl Db {
     pub fn open(path: PathBuf, key: String) -> Result<Self, String> {
         let existed_at_startup = path.exists();
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("could not create data directory: {e}"))?;
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("could not create data directory: {e}"))?;
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -43,10 +44,12 @@ impl Db {
                 "The database could not be created. Anchored did not leave it open.".to_string()
             })?;
             apply_key(&conn, &key)?;
-            conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0))
-                .map_err(|_| {
-                    "The database could not be created. Anchored did not leave it open.".to_string()
-                })?;
+            conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .map_err(|_| {
+                "The database could not be created. Anchored did not leave it open.".to_string()
+            })?;
             restrict_private_file(&path);
             conn
         } else {
@@ -96,8 +99,14 @@ impl Db {
             let p = PathBuf::from(format!("{}{}", self.path.display(), suffix));
             let _ = fs::remove_file(&p);
         }
-        remove_sidecars(&PathBuf::from(format!("{}.plaintext-bak", self.path.display())));
-        remove_sidecars(&PathBuf::from(format!("{}.encrypting", self.path.display())));
+        remove_sidecars(&PathBuf::from(format!(
+            "{}.plaintext-bak",
+            self.path.display()
+        )));
+        remove_sidecars(&PathBuf::from(format!(
+            "{}.encrypting",
+            self.path.display()
+        )));
 
         let conn = Connection::open(&self.path).map_err(|e| e.to_string())?;
         apply_key(&conn, &self.key)?;
@@ -120,8 +129,10 @@ fn apply_key(conn: &Connection, key: &str) -> Result<(), String> {
     conn.pragma_update(None, "key", key)
         .map_err(|e| format!("could not apply database key: {e}"))?;
     // Confirm the key works.
-    conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0))
-        .map_err(|_| "database key was rejected".to_string())?;
+    conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
+        r.get::<_, i64>(0)
+    })
+    .map_err(|_| "database key was rejected".to_string())?;
     Ok(())
 }
 
@@ -161,9 +172,7 @@ fn restrict_database_files(path: &Path) {
 
 fn table_counts(conn: &Connection) -> Result<Vec<(String, i64)>, String> {
     let mut stmt = conn
-        .prepare(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
-        )
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
         .map_err(|e| e.to_string())?;
     let names: Vec<String> = stmt
         .query_map([], |r| r.get(0))
@@ -172,13 +181,8 @@ fn table_counts(conn: &Connection) -> Result<Vec<(String, i64)>, String> {
         .map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for name in names {
-        if !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
-            || name
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_digit())
+        if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            || name.chars().next().is_some_and(|c| c.is_ascii_digit())
         {
             return Err(
                 "The database has a table Anchored cannot migrate. The original file was left unchanged."
@@ -186,7 +190,9 @@ fn table_counts(conn: &Connection) -> Result<Vec<(String, i64)>, String> {
             );
         }
         let count: i64 = conn
-            .query_row(&format!("SELECT count(*) FROM \"{name}\""), [], |r| r.get(0))
+            .query_row(&format!("SELECT count(*) FROM \"{name}\""), [], |r| {
+                r.get(0)
+            })
             .map_err(|e| e.to_string())?;
         out.push((name, count));
     }
@@ -210,12 +216,10 @@ fn migrate_plaintext_database(path: &Path, key: &str) -> Result<(), String> {
     {
         let migrated = Connection::open(&tmp).map_err(|e| e.to_string())?;
         // Rekey plaintext → SQLCipher.
-        migrated
-            .pragma_update(None, "rekey", key)
-            .map_err(|_| {
-                "Could not encrypt the existing database. The original file was left unchanged."
-                    .to_string()
-            })?;
+        migrated.pragma_update(None, "rekey", key).map_err(|_| {
+            "Could not encrypt the existing database. The original file was left unchanged."
+                .to_string()
+        })?;
         let after = table_counts(&migrated).map_err(|e| {
             let _ = fs::remove_file(&tmp);
             e
@@ -434,4 +438,39 @@ fn migrate(conn: &Connection, existing: bool) -> Result<bool, String> {
         }
     }
     Ok(changed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn wrong_key_leaves_the_encrypted_file_unreadable() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("anchored-db-test-{nanos}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("anchored.db");
+        let right = "correct-key-value-32chars-minimum";
+        let wrong = "different-key-value-32chars-minx";
+        let opened = Db::open(path.clone(), right.to_string()).unwrap();
+        drop(opened);
+
+        let err = match Db::open(path.clone(), wrong.to_string()) {
+            Err(err) => err,
+            Ok(_) => panic!("wrong key opened the database"),
+        };
+        assert!(err.contains("left the file"));
+        assert!(!err.contains(right));
+        assert!(!err.contains(wrong));
+        assert!(path.is_file());
+        let bytes = fs::read(&path).unwrap();
+        assert!(bytes.len() > 16);
+        assert!(!bytes.starts_with(PLAINTEXT_MAGIC));
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

@@ -1,4 +1,5 @@
 /target
+/dist-desktop
 /data/*.db
 /data/*.db-*
 .env

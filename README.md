@@ -4,6 +4,16 @@ Anchored is a personal finance app that stays on your computer. The server is wr
 
 You can run it locally, or in one container with Podman or Docker (including on TrueNAS). The published image is `ghcr.io/liquidagent-ai/budgeting-app`.
 
+## Windows
+
+Download the latest `Anchored-Setup` installer from [GitHub Releases](https://github.com/LiquidAgent-ai/budgeting-app/releases). Double-click it. If Windows says the app is unrecognized, choose More info, then Run anyway.
+
+The installer adds Anchored to the Start menu and the desktop. Open that shortcut. Anchored opens its own window.
+
+The books stay encrypted at `%APPDATA%\Anchored\anchored.db`. Windows seals the database key for your account in `%APPDATA%\Anchored\db-key.bin`, so you do not set `DATABASE_KEY`. A copy of the database file on its own cannot be read. Uninstalling Anchored leaves that folder in place.
+
+To link a bank, put `PLAID_CLIENT_ID`, `PLAID_SECRET`, and optional `PLAID_ENV` in `%APPDATA%\Anchored\plaid.env`. Anchored only asks Plaid for read-only access.
+
 ## Run locally
 
 ```bash
