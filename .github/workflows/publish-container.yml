@@ -8,13 +8,10 @@ on:
       - Dockerfile
       - .dockerignore
       - docker/**
-      - package.json
-      - package-lock.json
-      - next.config.ts
-      - tsconfig.json
-      - postcss.config.mjs
+      - Cargo.toml
+      - Cargo.lock
       - src/**
-      - public/**
+      - static/**
       - .github/workflows/publish-container.yml
   workflow_dispatch:
 
@@ -33,7 +30,7 @@ jobs:
   publish:
     name: Build and push image
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -1,8 +1,0 @@
-export async function register() {
-  if (process.env.NEXT_RUNTIME !== "nodejs") return;
-  if (process.env.NEXT_PHASE === "phase-production-build") return;
-  const { installLoopbackOnlyServer } = await import("./lib/loopback-server");
-  installLoopbackOnlyServer();
-  const { logProcessStart } = await import("./lib/log");
-  await logProcessStart();
-}
