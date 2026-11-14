@@ -7,6 +7,19 @@ const nextConfig: NextConfig = {
   outputFileTracingExcludes: {
     "*": [".env", ".env.*", "data/**/*"],
   },
+  webpack: (config, { nextRuntime }) => {
+    // Middleware causes an edge build of instrumentation. That bundle never runs
+    // the database startup, but webpack still follows its imports.
+    if (nextRuntime === "edge") {
+      config.resolve.alias = {
+        ...config.resolve.alias,
+        fs: false,
+        path: false,
+        "better-sqlite3-multiple-ciphers": false,
+      };
+    }
+    return config;
+  },
 };
 
 export default nextConfig;

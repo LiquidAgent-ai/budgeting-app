@@ -1,7 +1,9 @@
 import { isContainerServer } from "@/lib/public-url";
+import { formatBoundAddress, logRequestFailure, noteListenAddress } from "./log";
 import { isLoopbackAddress, requestIsBlocked } from "./local-access";
 
 type NodeRequest = {
+  method?: string;
   url?: string;
   headers: Record<string, string | string[] | undefined>;
   socket?: { remoteAddress?: string | null };
@@ -11,6 +13,7 @@ type NodeResponse = {
   statusCode: number;
   setHeader: (name: string, value: string) => void;
   end: (body?: string) => void;
+  once?: (event: string, listener: () => void) => void;
 };
 
 let installed = false;
@@ -60,9 +63,16 @@ export function installLoopbackOnlyServer(): void {
   }
 
   const net = process.getBuiltinModule("net");
+  const http = process.getBuiltinModule("http");
   const originalListen = net.Server.prototype.listen;
   net.Server.prototype.listen = function (this: typeof net.Server.prototype, ...args: unknown[]) {
     const nextArgs = args.slice();
+    if (this instanceof http.Server) {
+      this.once("listening", () => {
+        const formatted = formatBoundAddress(this.address());
+        if (formatted) noteListenAddress(formatted, true);
+      });
+    }
     if (!isContainerServer()) {
       const first = nextArgs[0];
       if (typeof first === "number") {
@@ -82,14 +92,18 @@ export function installLoopbackOnlyServer(): void {
     return originalListen.apply(this, nextArgs as never);
   } as typeof net.Server.prototype.listen;
 
-  const http = process.getBuiltinModule("http");
   const original = http.Server.prototype.emit;
   http.Server.prototype.emit = function (this: typeof http.Server.prototype, event: string, ...args: unknown[]) {
     if (event === "request" || event === "upgrade") {
       const req = args[0] as NodeRequest;
+      const res = args[1] as NodeResponse;
+      if (event === "request" && req && res?.once) {
+        res.once("finish", () => {
+          logRequestFailure(req.method || "GET", req.url || "/", res.statusCode);
+        });
+      }
       if (req && blocked(req)) {
         if (event === "request") {
-          const res = args[1] as NodeResponse;
           res.statusCode = 403;
           res.setHeader("Content-Type", "text/plain; charset=utf-8");
           res.setHeader("Cache-Control", "no-store");

@@ -6,6 +6,7 @@ import {
   PLAID_ACCESS_MODE,
   PLAID_COUNTRY_CODES,
 } from "@/lib/plaid";
+import { logPlaidLinkFailed, logPlaidLinkStarted } from "@/lib/log";
 import { safeClientError } from "@/lib/safe-error";
 
 export const runtime = "nodejs";
@@ -22,6 +23,7 @@ export async function POST() {
   }
 
   try {
+    logPlaidLinkStarted();
     const { products, optional_products, access_mode } = getReadOnlyLinkTokenProducts();
     const client = getPlaidClient();
 
@@ -43,6 +45,7 @@ export async function POST() {
       optional_products,
     });
   } catch (err) {
+    logPlaidLinkFailed(err);
     return NextResponse.json(
       { error: safeClientError(err, "Plaid error"), access_mode: PLAID_ACCESS_MODE },
       { status: 500 }

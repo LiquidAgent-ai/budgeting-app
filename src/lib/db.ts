@@ -1,6 +1,7 @@
 import Database from "better-sqlite3-multiple-ciphers";
 import fs from "fs";
 import path from "path";
+import { logError, logInfo, noteDatabaseResult } from "./log";
 
 type SqliteDb = InstanceType<typeof Database>;
 
@@ -9,6 +10,7 @@ type DbGlobal = typeof globalThis & {
   __anchoredDbPath?: string;
   __anchoredDbUmask?: boolean;
   __anchoredDbExitHook?: boolean;
+  __anchoredMigrated?: boolean;
 };
 
 const PLAINTEXT_MAGIC = Buffer.from("SQLite format 3\0", "utf8");
@@ -44,13 +46,22 @@ function closeStoredDb() {
   const current = g.__anchoredDb;
   g.__anchoredDb = undefined;
   g.__anchoredDbPath = undefined;
-  if (current && current.open) {
-    try {
-      current.close();
-    } catch {
-      // already closed
-    }
+  if (!current?.open) return;
+  try {
+    current.close();
+    logInfo("database closed");
+  } catch (err) {
+    logError("database close failed", err);
   }
+}
+
+function markMigrated() {
+  dbGlobal().__anchoredMigrated = true;
+}
+
+/** True when this process encrypted an existing file or changed its schema. */
+export function startupMigrated(): boolean {
+  return dbGlobal().__anchoredMigrated === true;
 }
 
 function assignEnvFromFile(file: string) {
@@ -308,7 +319,18 @@ function recoverInterruptedEncryption(dbPath: string) {
   }
 }
 
-function migrate(db: SqliteDb) {
+function tableNames(db: SqliteDb): Set<string> {
+  const rows = db
+    .prepare(
+      `SELECT name FROM sqlite_master
+       WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`
+    )
+    .all() as { name: string }[];
+  return new Set(rows.map((row) => row.name));
+}
+
+function migrate(db: SqliteDb, existing: boolean): boolean {
+  const before = existing ? tableNames(db) : null;
   db.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
@@ -376,22 +398,39 @@ function migrate(db: SqliteDb) {
     CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category);
   `);
 
+  let changed = false;
+  if (before) {
+    for (const name of tableNames(db)) {
+      if (!before.has(name)) changed = true;
+    }
+  }
+
   // Existing DBs created before access_mode existed
   const cols = db.prepare("PRAGMA table_info(plaid_items)").all() as { name: string }[];
   if (!cols.some((c) => c.name === "access_mode")) {
     db.exec(
       `ALTER TABLE plaid_items ADD COLUMN access_mode TEXT NOT NULL DEFAULT 'read_only'`
     );
+    if (existing) changed = true;
   }
+  return changed;
 }
 
-function openDatabase(dbPath: string, key: Buffer): SqliteDb {
+function openDatabase(
+  dbPath: string,
+  key: Buffer
+): { db: SqliteDb; existed: boolean; encryptedExisting: boolean } {
   recoverInterruptedEncryption(dbPath);
   if (fs.existsSync(dbPath) && fs.statSync(dbPath).size === 0) {
     fs.rmSync(dbPath, { force: true });
   }
-  if (fs.existsSync(dbPath) && isPlaintextDatabase(dbPath)) {
+  const existed = fs.existsSync(dbPath);
+  let encryptedExisting = false;
+  if (existed && isPlaintextDatabase(dbPath)) {
     migratePlaintextDatabase(dbPath, key);
+    logInfo("database migrated existing file to encrypted storage");
+    markMigrated();
+    encryptedExisting = true;
   }
 
   if (!fs.existsSync(dbPath)) {
@@ -400,7 +439,7 @@ function openDatabase(dbPath: string, key: Buffer): SqliteDb {
       applyKey(created, key);
       created.prepare("SELECT count(*) AS c FROM sqlite_master").get();
       restrictPrivateFile(dbPath);
-      return created;
+      return { db: created, existed: false, encryptedExisting: false };
     } catch (err) {
       try {
         created.close();
@@ -418,7 +457,7 @@ function openDatabase(dbPath: string, key: Buffer): SqliteDb {
     const db = openEncrypted(dbPath, key);
     const bak = `${dbPath}.plaintext-bak`;
     if (fs.existsSync(bak)) fs.rmSync(bak, { force: true });
-    return db;
+    return { db, existed: true, encryptedExisting };
   } catch {
     throw new Error(
       "The database could not be opened with DATABASE_KEY. Anchored left the file in place and did not replace it."
@@ -454,23 +493,25 @@ export function getDb(): SqliteDb {
   if (!g.__anchoredDbExitHook) {
     g.__anchoredDbExitHook = true;
     process.on("exit", () => {
-      const openDb = dbGlobal().__anchoredDb;
-      if (openDb?.open) {
-        try {
-          openDb.close();
-        } catch {
-          // process is exiting
-        }
-      }
+      closeStoredDb();
     });
   }
 
-  const db = openDatabase(dbPath, key);
-  g.__anchoredDb = db;
+  const opened = openDatabase(dbPath, key);
+  g.__anchoredDb = opened.db;
   g.__anchoredDbPath = dbPath;
-  migrate(db);
+  const schemaChanged = migrate(opened.db, opened.existed);
+  if (schemaChanged) {
+    logInfo("database schema migrated");
+    markMigrated();
+  }
   restrictDatabaseFiles(dbPath);
-  return db;
+  const migrated = schemaChanged || opened.encryptedExisting;
+  logInfo(
+    `database opened existing=${opened.existed ? "yes" : "no"} migrated=${migrated ? "yes" : "no"}`
+  );
+  noteDatabaseResult(true, migrated);
+  return opened.db;
 }
 
 export function resetDb() {

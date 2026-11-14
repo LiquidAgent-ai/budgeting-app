@@ -109,7 +109,10 @@ function redactOutput(text, env) {
     const value = env && env[key];
     if (typeof value === "string" && value.length >= 8) out = out.split(value).join("[redacted]");
   }
-  return out.replace(/access-(?:sandbox|development|production)-[A-Za-z0-9_-]+/g, "[redacted]");
+  return out
+    .replace(/access-(?:sandbox|development|production)-[A-Za-z0-9_-]+/g, "[redacted]")
+    .replace(/public-(?:sandbox|development|production)-[A-Za-z0-9_-]+/g, "[redacted]")
+    .replace(/link-(?:sandbox|development|production)-[A-Za-z0-9_-]+/g, "[redacted]");
 }
 
 function readPlaidEnv(file) {
@@ -252,6 +255,7 @@ function childEnv(port) {
   env.PORT = String(port);
   env.HOSTNAME = "127.0.0.1";
   env.HOST = "127.0.0.1";
+  env.ANCHORED_DESKTOP = "1";
   const plaid = readPlaidEnv(path.join(app.getPath("userData"), "plaid.env"));
   for (const key of PLAID_KEYS) {
     if (plaid[key]) env[key] = plaid[key];

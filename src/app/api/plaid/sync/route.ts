@@ -3,6 +3,7 @@ import { v4 as uuid } from "uuid";
 import { getDb } from "@/lib/db";
 import { categorize } from "@/lib/categories";
 import { getPlaidClient, isPlaidConfigured, mapPlaidAccountType } from "@/lib/plaid";
+import { logPlaidSyncFailed, logPlaidSyncFinished, logPlaidSyncStarted } from "@/lib/log";
 import { safeClientError } from "@/lib/safe-error";
 
 export const runtime = "nodejs";
@@ -21,16 +22,20 @@ export async function POST() {
     cursor: string | null;
   }>;
 
+  logPlaidSyncStarted();
   if (items.length === 0) {
+    logPlaidSyncFinished(0, 0);
     return NextResponse.json({ synced: 0, message: "No linked institutions" });
   }
 
   const client = getPlaidClient();
   let added = 0;
+  let accountCount = 0;
 
   try {
     for (const item of items) {
       const accountsRes = await client.accountsGet({ access_token: item.access_token });
+      accountCount += accountsRes.data.accounts.length;
       for (const a of accountsRes.data.accounts) {
         const type = mapPlaidAccountType(a.type, a.subtype);
         let current = a.balances.current ?? 0;
@@ -113,8 +118,10 @@ export async function POST() {
       }
     }
 
+    logPlaidSyncFinished(accountCount, added);
     return NextResponse.json({ synced: added });
   } catch (err) {
+    logPlaidSyncFailed(err);
     return NextResponse.json({ error: safeClientError(err, "Sync failed") }, { status: 500 });
   }
 }

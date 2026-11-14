@@ -7,6 +7,13 @@ import {
   mapPlaidAccountType,
   PLAID_ACCESS_MODE,
 } from "@/lib/plaid";
+import {
+  logPlaidItemConnectFailed,
+  logPlaidItemConnected,
+  logPlaidSyncFailed,
+  logPlaidSyncFinished,
+  logPlaidSyncStarted,
+} from "@/lib/log";
 import { safeClientError } from "@/lib/safe-error";
 
 export const runtime = "nodejs";
@@ -87,17 +94,21 @@ export async function POST(req: NextRequest) {
 
     insert();
 
-    // Best-effort transaction + investment sync
-    try {
-      await syncTransactions(accessToken, plaidItemRowId);
-    } catch {
-      // sandbox may not always have transactions immediately
-    }
+    const accountCount = accountsRes.data.accounts.length;
+    logPlaidItemConnected(accountCount);
 
+    // Best-effort transaction + investment sync. A missing investments product is not a failed sync.
+    logPlaidSyncStarted();
     try {
-      await syncInvestments(accessToken, plaidItemRowId);
-    } catch {
-      // investments product may not be on every item
+      const transactions = await syncTransactions(accessToken, plaidItemRowId);
+      try {
+        await syncInvestments(accessToken, plaidItemRowId);
+      } catch {
+        // investments product may not be on every item
+      }
+      logPlaidSyncFinished(accountCount, transactions);
+    } catch (err) {
+      logPlaidSyncFailed(err);
     }
 
     return NextResponse.json({
@@ -108,11 +119,12 @@ export async function POST(req: NextRequest) {
       read_only: true,
     });
   } catch (err) {
+    logPlaidItemConnectFailed(err);
     return NextResponse.json({ error: safeClientError(err, "Exchange failed") }, { status: 500 });
   }
 }
 
-async function syncTransactions(accessToken: string, plaidItemRowId: string) {
+async function syncTransactions(accessToken: string, plaidItemRowId: string): Promise<number> {
   const { getPlaidClient } = await import("@/lib/plaid");
   const { categorize } = await import("@/lib/categories");
   const client = getPlaidClient();
@@ -121,6 +133,7 @@ async function syncTransactions(accessToken: string, plaidItemRowId: string) {
   let cursor: string | undefined = undefined;
   let hasMore = true;
   let pages = 0;
+  let added = 0;
 
   const accountMap = new Map(
     (
@@ -149,7 +162,7 @@ async function syncTransactions(accessToken: string, plaidItemRowId: string) {
       if (!accountId) continue;
       const { category, isSubscription } = categorize(t.name, t.merchant_name);
       // Plaid: positive amount = money leaving account
-      insert.run(
+      const result = insert.run(
         uuid(),
         accountId,
         t.transaction_id,
@@ -161,6 +174,7 @@ async function syncTransactions(accessToken: string, plaidItemRowId: string) {
         isSubscription ? 1 : 0,
         t.pending ? 1 : 0
       );
+      if (result.changes > 0) added += 1;
     }
 
     hasMore = res.data.has_more;
@@ -173,6 +187,7 @@ async function syncTransactions(accessToken: string, plaidItemRowId: string) {
       plaidItemRowId
     );
   }
+  return added;
 }
 
 async function syncInvestments(accessToken: string, plaidItemRowId: string) {

@@ -43,7 +43,7 @@ The first time you open the dashboard on a new install, Anchored loads a demo ho
 
 `npm run dev` uses `data/anchored.db` inside this folder, unless you set `DATABASE_PATH` to another full path. The container uses `/data/anchored.db` unless you set `DATABASE_PATH`. The Windows app sets the path to the file above.
 
-If the window says Anchored could not start, look at `%APPDATA%\Anchored\server.log`.
+If the window says Anchored could not start, look at the log in [Logs](#logs).
 
 ## The database key
 
@@ -193,6 +193,12 @@ PLAID_ENV=sandbox
 Restart Anchored. For `npm run dev`, copy `.env.example` to `.env.local` and use the same kind of values. Do not commit that file.
 
 Anchored only asks Plaid for read-only access: transactions, balances, investments, and optional liabilities. It does not request transfers, payments, or account numbers for moving money.
+
+## Logs
+
+Anchored writes one plain line when something actually happens: the server starts, the database opens or closes, a bank is linked, a sync finishes or fails, or a request fails. Successful pages, static files, and `/api/health` checks are left out. The database key, bank tokens, account numbers, and transaction details are not written.
+
+A container shows those lines in `podman logs anchored` or `docker logs anchored`. The Windows app writes them to `%APPDATA%\Anchored\server.log`, and keeps the previous file when that log passes 1 MB. `npm run dev` prints them in the terminal.
 
 ## Commands
 
