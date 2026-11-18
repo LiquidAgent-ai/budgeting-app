@@ -1,4 +1,10 @@
-use crate::log::{error_event, info_event};
+pub mod categories;
+pub mod finance;
+pub mod models;
+pub mod seed;
+pub mod sql;
+
+use crate::config::logging::{error_event, info_event};
 use rusqlite::{Connection, OpenFlags};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -44,7 +50,7 @@ impl Db {
                 "The database could not be created. Anchored did not leave it open.".to_string()
             })?;
             apply_key(&conn, &key)?;
-            conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
+            conn.query_row(sql::SELECT_SQLITE_MASTER_COUNT, [], |r| {
                 r.get::<_, i64>(0)
             })
             .map_err(|_| {
@@ -129,7 +135,7 @@ fn apply_key(conn: &Connection, key: &str) -> Result<(), String> {
     conn.pragma_update(None, "key", key)
         .map_err(|e| format!("could not apply database key: {e}"))?;
     // Confirm the key works.
-    conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
+    conn.query_row(sql::SELECT_SQLITE_MASTER_COUNT, [], |r| {
         r.get::<_, i64>(0)
     })
     .map_err(|_| "database key was rejected".to_string())?;
@@ -176,7 +182,7 @@ fn restrict_database_files(path: &Path) {
 
 fn table_counts(conn: &Connection) -> Result<Vec<(String, i64)>, String> {
     let mut stmt = conn
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+        .prepare(sql::SELECT_USER_TABLES)
         .map_err(|e| e.to_string())?;
     let names: Vec<String> = stmt
         .query_map([], |r| r.get(0))
@@ -314,9 +320,7 @@ fn recover_interrupted_encryption(path: &Path) {
 fn migrate(conn: &Connection, existing: bool) -> Result<bool, String> {
     let before: std::collections::HashSet<String> = if existing {
         let mut stmt = conn
-            .prepare(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
-            )
+            .prepare(sql::SELECT_USER_TABLES)
             .map_err(|e| e.to_string())?;
         let names = stmt
             .query_map([], |r| r.get(0))
@@ -328,74 +332,7 @@ fn migrate(conn: &Connection, existing: bool) -> Result<bool, String> {
         Default::default()
     };
 
-    conn.execute_batch(
-        r#"
-        PRAGMA journal_mode = WAL;
-        PRAGMA foreign_keys = ON;
-
-        CREATE TABLE IF NOT EXISTS plaid_items (
-          id TEXT PRIMARY KEY,
-          item_id TEXT NOT NULL UNIQUE,
-          access_token TEXT NOT NULL,
-          institution_id TEXT,
-          institution_name TEXT,
-          cursor TEXT,
-          access_mode TEXT NOT NULL DEFAULT 'read_only',
-          created_at TEXT NOT NULL DEFAULT (datetime('now')),
-          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-
-        CREATE TABLE IF NOT EXISTS accounts (
-          id TEXT PRIMARY KEY,
-          name TEXT NOT NULL,
-          official_name TEXT,
-          type TEXT NOT NULL,
-          subtype TEXT,
-          mask TEXT,
-          balance_current REAL NOT NULL DEFAULT 0,
-          balance_available REAL,
-          currency TEXT NOT NULL DEFAULT 'USD',
-          institution_name TEXT,
-          plaid_account_id TEXT,
-          plaid_item_id TEXT,
-          is_manual INTEGER NOT NULL DEFAULT 0,
-          include_in_net_worth INTEGER NOT NULL DEFAULT 1,
-          created_at TEXT NOT NULL DEFAULT (datetime('now')),
-          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-          FOREIGN KEY (plaid_item_id) REFERENCES plaid_items(id) ON DELETE SET NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS transactions (
-          id TEXT PRIMARY KEY,
-          account_id TEXT NOT NULL,
-          plaid_transaction_id TEXT,
-          amount REAL NOT NULL,
-          date TEXT NOT NULL,
-          name TEXT NOT NULL,
-          merchant_name TEXT,
-          category TEXT NOT NULL DEFAULT 'Other',
-          subcategory TEXT,
-          pending INTEGER NOT NULL DEFAULT 0,
-          is_subscription INTEGER NOT NULL DEFAULT 0,
-          notes TEXT,
-          created_at TEXT NOT NULL DEFAULT (datetime('now')),
-          FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS budgets (
-          id TEXT PRIMARY KEY,
-          category TEXT NOT NULL UNIQUE,
-          monthly_limit REAL NOT NULL,
-          created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_plaid_id
-          ON transactions(plaid_transaction_id) WHERE plaid_transaction_id IS NOT NULL;
-        CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
-        CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id);
-        CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category);
-        "#,
-    )
+    conn.execute_batch(sql::SCHEMA)
     .map_err(|e| {
         error_event("database schema migrate failed");
         e.to_string()
@@ -404,9 +341,7 @@ fn migrate(conn: &Connection, existing: bool) -> Result<bool, String> {
     let mut changed = false;
     if existing {
         let mut stmt = conn
-            .prepare(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
-            )
+            .prepare(sql::SELECT_USER_TABLES)
             .map_err(|e| e.to_string())?;
         let after: std::collections::HashSet<String> = stmt
             .query_map([], |r| r.get(0))
@@ -422,7 +357,7 @@ fn migrate(conn: &Connection, existing: bool) -> Result<bool, String> {
 
     let cols: Vec<String> = {
         let mut stmt = conn
-            .prepare("PRAGMA table_info(plaid_items)")
+            .prepare(sql::PRAGMA_TABLE_INFO_PLAID_ITEMS)
             .map_err(|e| e.to_string())?;
         let names = stmt
             .query_map([], |r| r.get::<_, String>(1))
@@ -432,10 +367,7 @@ fn migrate(conn: &Connection, existing: bool) -> Result<bool, String> {
         names
     };
     if !cols.iter().any(|c| c == "access_mode") {
-        conn.execute(
-            "ALTER TABLE plaid_items ADD COLUMN access_mode TEXT NOT NULL DEFAULT 'read_only'",
-            [],
-        )
+        conn.execute(sql::ALTER_PLAID_ITEMS_ADD_ACCESS_MODE, [])
         .map_err(|e| e.to_string())?;
         if existing {
             changed = true;

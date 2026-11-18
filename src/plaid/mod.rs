@@ -1,9 +1,10 @@
 //! Read-only Plaid access only. Never requests transfers, payments, or Auth.
 
-use crate::categories::categorize;
+use crate::config::logging::{error_event, info_event};
 use crate::config::Config;
+use crate::db::categories::categorize;
+use crate::db::sql;
 use crate::db::Db;
-use crate::log::{error_event, info_event};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -184,9 +185,7 @@ pub async fn exchange_token(
     {
         let conn = db.lock()?;
         conn.execute(
-            r#"INSERT INTO plaid_items (
-                id, item_id, access_token, institution_id, institution_name, access_mode
-              ) VALUES (?, ?, ?, ?, ?, 'read_only')"#,
+            sql::INSERT_PLAID_ITEM,
             params![local_id, item_id, access_token, inst_id, inst_name],
         )
         .map_err(|e| e.to_string())?;
@@ -216,10 +215,7 @@ pub async fn exchange_token(
                     .and_then(|v| v.as_str())
                     .unwrap_or("USD");
                 conn.execute(
-                    r#"INSERT INTO accounts (
-                        id, name, official_name, type, subtype, mask, balance_current, balance_available,
-                        currency, institution_name, plaid_account_id, plaid_item_id, is_manual, include_in_net_worth
-                      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1)"#,
+                    sql::INSERT_PLAID_ACCOUNT,
                     params![
                         Uuid::new_v4().to_string(),
                         name,
@@ -254,7 +250,7 @@ pub async fn sync_all(cfg: &Config, db: &Db) -> Result<Value, String> {
     let items: Vec<(String, String, Option<String>)> = {
         let conn = db.lock()?;
         let mut stmt = conn
-            .prepare("SELECT id, access_token, cursor FROM plaid_items")
+            .prepare(sql::SELECT_PLAID_ITEMS)
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
@@ -315,7 +311,7 @@ async fn sync_item(
             for rem in removed {
                 if let Some(id) = rem.get("transaction_id").and_then(|v| v.as_str()) {
                     let _ = conn.execute(
-                        "DELETE FROM transactions WHERE plaid_transaction_id = ?",
+                        sql::DELETE_TRANSACTION_BY_PLAID_ID,
                         params![id],
                     );
                 }
@@ -323,7 +319,7 @@ async fn sync_item(
             if let Some(c) = data.get("next_cursor").and_then(|v| v.as_str()) {
                 next_cursor = Some(c.to_string());
                 conn.execute(
-                    "UPDATE plaid_items SET cursor = ?, updated_at = datetime('now') WHERE id = ?",
+                    sql::UPDATE_PLAID_ITEM_CURSOR,
                     params![c, item_local_id],
                 )
                 .map_err(|e| e.to_string())?;
@@ -356,7 +352,7 @@ fn upsert_transaction(
         .unwrap_or("");
     let account_id: String = conn
         .query_row(
-            "SELECT id FROM accounts WHERE plaid_account_id = ? AND plaid_item_id = ?",
+            sql::SELECT_ACCOUNT_BY_PLAID_IDS,
             params![plaid_account_id, item_local_id],
             |r| r.get(0),
         )
@@ -376,17 +372,14 @@ fn upsert_transaction(
 
     let existing: Option<String> = conn
         .query_row(
-            "SELECT id FROM transactions WHERE plaid_transaction_id = ?",
+            sql::SELECT_TRANSACTION_ID_BY_PLAID_ID,
             params![plaid_txn_id],
             |r| r.get(0),
         )
         .ok();
     if let Some(id) = existing {
         conn.execute(
-            r#"UPDATE transactions SET
-                amount = ?, date = ?, name = ?, merchant_name = ?,
-                category = ?, pending = ?, is_subscription = ?
-              WHERE id = ?"#,
+            sql::UPDATE_TRANSACTION,
             params![
                 amount,
                 date,
@@ -401,10 +394,7 @@ fn upsert_transaction(
         .map_err(|e| e.to_string())?;
     } else {
         conn.execute(
-            r#"INSERT INTO transactions (
-                id, account_id, plaid_transaction_id, amount, date, name, merchant_name,
-                category, pending, is_subscription
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            sql::INSERT_PLAID_TRANSACTION,
             params![
                 Uuid::new_v4().to_string(),
                 account_id,

@@ -1,5 +1,6 @@
+use crate::db::sql;
 use crate::db::Db;
-use crate::models::{Account, CategorySpend, DashboardSummary, NetWorthBreakdown, Transaction};
+use crate::db::models::{Account, CategorySpend, DashboardSummary, NetWorthBreakdown, Transaction};
 use chrono::{Datelike, Local};
 use rusqlite::params;
 
@@ -11,7 +12,7 @@ pub fn month_start() -> String {
 pub fn list_accounts(db: &Db) -> Result<Vec<Account>, String> {
     let conn = db.lock()?;
     let mut stmt = conn
-        .prepare("SELECT id, name, official_name, type, subtype, mask, balance_current, balance_available, currency, institution_name, plaid_account_id, plaid_item_id, is_manual, include_in_net_worth, created_at, updated_at FROM accounts ORDER BY type, name")
+        .prepare(sql::SELECT_ACCOUNTS)
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], map_account)
@@ -77,10 +78,7 @@ pub fn dashboard(db: &Db) -> Result<DashboardSummary, String> {
 
     let (month_spend, month_income): (f64, f64) = conn
         .query_row(
-            r#"SELECT
-                 COALESCE(SUM(CASE WHEN amount > 0 AND category NOT IN ('Transfer','Income','Investments') THEN amount ELSE 0 END), 0),
-                 COALESCE(SUM(CASE WHEN amount < 0 AND category = 'Income' THEN ABS(amount) ELSE 0 END), 0)
-               FROM transactions WHERE date >= ?"#,
+            sql::SELECT_MONTH_SPEND_INCOME,
             params![start],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
@@ -88,7 +86,7 @@ pub fn dashboard(db: &Db) -> Result<DashboardSummary, String> {
 
     let budget_total: f64 = conn
         .query_row(
-            "SELECT COALESCE(SUM(monthly_limit),0) FROM budgets",
+            sql::SELECT_BUDGET_TOTAL,
             [],
             |r| r.get(0),
         )
@@ -96,10 +94,7 @@ pub fn dashboard(db: &Db) -> Result<DashboardSummary, String> {
 
     let budget_spent: f64 = conn
         .query_row(
-            r#"SELECT COALESCE(SUM(t.amount),0)
-               FROM transactions t
-               INNER JOIN budgets b ON b.category = t.category
-               WHERE t.date >= ? AND t.amount > 0"#,
+            sql::SELECT_BUDGET_SPENT,
             params![start],
             |r| r.get(0),
         )
@@ -107,10 +102,7 @@ pub fn dashboard(db: &Db) -> Result<DashboardSummary, String> {
 
     let (subscription_count, subscription_total): (i64, f64) = conn
         .query_row(
-            r#"SELECT COUNT(DISTINCT COALESCE(merchant_name, name)),
-                      COALESCE(SUM(amount),0)
-               FROM transactions
-               WHERE is_subscription = 1 AND amount > 0 AND date >= ?"#,
+            sql::SELECT_SUBSCRIPTION_TOTALS,
             params![start],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
@@ -118,13 +110,7 @@ pub fn dashboard(db: &Db) -> Result<DashboardSummary, String> {
 
     let mut stmt = conn
         .prepare(
-            r#"SELECT t.id, t.account_id, t.plaid_transaction_id, t.amount, t.date, t.name,
-                      t.merchant_name, t.category, t.subcategory, t.pending, t.is_subscription,
-                      t.notes, t.created_at, a.name
-               FROM transactions t
-               JOIN accounts a ON a.id = t.account_id
-               ORDER BY t.date DESC, t.created_at DESC
-               LIMIT 12"#,
+            sql::SELECT_RECENT_TRANSACTIONS,
         )
         .map_err(|e| e.to_string())?;
     let recent_transactions = stmt
@@ -152,12 +138,7 @@ pub fn dashboard(db: &Db) -> Result<DashboardSummary, String> {
 
     let mut stmt = conn
         .prepare(
-            r#"SELECT category, SUM(amount) as amount
-               FROM transactions
-               WHERE date >= ? AND amount > 0 AND category NOT IN ('Transfer','Income','Investments')
-               GROUP BY category
-               ORDER BY amount DESC
-               LIMIT 8"#,
+            sql::SELECT_SPEND_BY_CATEGORY,
         )
         .map_err(|e| e.to_string())?;
     let spend_by_category = stmt
@@ -205,13 +186,7 @@ pub fn list_transactions(db: &Db, limit: i64) -> Result<Vec<Transaction>, String
     let conn = db.lock()?;
     let mut stmt = conn
         .prepare(
-            r#"SELECT t.id, t.account_id, t.plaid_transaction_id, t.amount, t.date, t.name,
-                      t.merchant_name, t.category, t.subcategory, t.pending, t.is_subscription,
-                      t.notes, t.created_at, a.name
-               FROM transactions t
-               JOIN accounts a ON a.id = t.account_id
-               ORDER BY t.date DESC, t.created_at DESC
-               LIMIT ?"#,
+            sql::SELECT_TRANSACTIONS,
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
@@ -239,14 +214,14 @@ pub fn list_transactions(db: &Db, limit: i64) -> Result<Vec<Transaction>, String
     Ok(rows)
 }
 
-pub fn list_budgets(db: &Db) -> Result<Vec<crate::models::Budget>, String> {
+pub fn list_budgets(db: &Db) -> Result<Vec<crate::db::models::Budget>, String> {
     let conn = db.lock()?;
     let mut stmt = conn
-        .prepare("SELECT id, category, monthly_limit, created_at FROM budgets ORDER BY category")
+        .prepare(sql::SELECT_BUDGETS)
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |r| {
-            Ok(crate::models::Budget {
+            Ok(crate::db::models::Budget {
                 id: r.get(0)?,
                 category: r.get(1)?,
                 monthly_limit: r.get(2)?,
@@ -264,13 +239,7 @@ pub fn list_subscriptions(db: &Db) -> Result<Vec<Transaction>, String> {
     let conn = db.lock()?;
     let mut stmt = conn
         .prepare(
-            r#"SELECT t.id, t.account_id, t.plaid_transaction_id, t.amount, t.date, t.name,
-                      t.merchant_name, t.category, t.subcategory, t.pending, t.is_subscription,
-                      t.notes, t.created_at, a.name
-               FROM transactions t
-               JOIN accounts a ON a.id = t.account_id
-               WHERE t.is_subscription = 1 AND t.amount > 0 AND t.date >= ?
-               ORDER BY t.date DESC"#,
+            sql::SELECT_SUBSCRIPTIONS,
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt

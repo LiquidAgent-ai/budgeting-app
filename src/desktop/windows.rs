@@ -1,9 +1,9 @@
 //! Windows desktop shell. Opens a window, serves the app on 127.0.0.1, and
 //! seals the database key with DPAPI. The plaintext key is not written to disk.
 
+use crate::config::logging::{error_event, info_event};
 use crate::config::Config;
-use crate::key_material::{blob_contains_secret, encode_key_material, key_action, KeyAction};
-use crate::log::{error_event, info_event};
+use super::key_material::{blob_contains_secret, encode_key_material, key_action, KeyAction};
 use std::path::{Path, PathBuf};
 
 const CREDENTIAL_ERROR: &str = "Anchored could not read the database key from the OS credential store. The database was not opened.";
@@ -26,10 +26,10 @@ pub fn run() -> Result<(), String> {
     acquire_single_instance()?;
     let root = data_root()?;
     std::fs::create_dir_all(&root).map_err(|_| "could not create the Anchored data folder")?;
-    if !crate::static_dir().join("app.css").is_file() {
+    if !crate::server::static_dir().join("app.css").is_file() {
         return Err("This install is missing its pages. Reinstall Anchored.".into());
     }
-    crate::log::init_file(&root.join("server.log"));
+    crate::config::logging::init_file(&root.join("server.log"));
     info_event("desktop session starting");
 
     let port = free_loopback_port()?;
@@ -41,7 +41,7 @@ pub fn run() -> Result<(), String> {
     let config = Config::from_env()?;
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let result = crate::block_on_serve(config);
+        let result = crate::server::block_on_serve(config);
         let _ = tx.send(result);
     });
     wait_until_ready(port, &rx)?;

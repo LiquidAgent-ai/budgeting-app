@@ -1,8 +1,9 @@
 //! Import bank and card exports (CSV, TSV, OFX, QFX, QIF) without Plaid.
 
-use crate::categories::categorize;
+use crate::config::logging::{error_event, info_event};
+use crate::db::categories::categorize;
+use crate::db::sql;
 use crate::db::Db;
-use crate::log::{error_event, info_event};
 use rusqlite::params;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -59,10 +60,7 @@ pub fn import_bytes(
             }
             let (category, is_sub) = categorize(&row.name, row.merchant_name.as_deref());
             tx.execute(
-                r#"INSERT INTO transactions (
-                    id, account_id, plaid_transaction_id, amount, date, name, merchant_name,
-                    category, pending, is_subscription, notes
-                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)"#,
+                sql::INSERT_IMPORTED_TRANSACTION,
                 params![
                     Uuid::new_v4().to_string(),
                     account_id,
@@ -107,7 +105,7 @@ fn ensure_account(db: &Db, account_id: &str) -> Result<(), String> {
     let conn = db.lock()?;
     let found: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM accounts WHERE id = ?",
+            sql::COUNT_ACCOUNTS_BY_ID,
             params![account_id],
             |r| r.get(0),
         )
@@ -121,7 +119,7 @@ fn ensure_account(db: &Db, account_id: &str) -> Result<(), String> {
 fn txn_exists(conn: &rusqlite::Connection, fingerprint: &str) -> Result<bool, String> {
     let n: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM transactions WHERE plaid_transaction_id = ?",
+            sql::COUNT_TRANSACTIONS_BY_PLAID_ID,
             params![fingerprint],
             |r| r.get(0),
         )

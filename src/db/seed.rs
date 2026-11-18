@@ -1,4 +1,5 @@
-use crate::categories::categorize;
+use crate::db::categories::categorize;
+use crate::db::sql;
 use crate::db::Db;
 use chrono::{Duration, Local};
 use rusqlite::params;
@@ -18,7 +19,7 @@ pub fn seed_database(db: &Db, fresh: bool) -> Result<(bool, String), String> {
     {
         let conn = db.lock()?;
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM accounts", [], |r| r.get(0))
+            .query_row(sql::COUNT_ACCOUNTS, [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
         if count > 0 && !fresh {
             return Ok((false, "Database already has accounts".into()));
@@ -45,10 +46,7 @@ pub fn seed_database(db: &Db, fresh: bool) -> Result<(bool, String), String> {
                           inst: &str|
      -> Result<(), String> {
         tx.execute(
-            r#"INSERT INTO accounts (
-                id, name, official_name, type, subtype, mask, balance_current, balance_available,
-                currency, institution_name, is_manual, include_in_net_worth
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, 1, 1)"#,
+            sql::INSERT_SEED_ACCOUNT,
             params![id, name, official, ty, subtype, mask, bal, avail, inst],
         )
         .map_err(|e| e.to_string())?;
@@ -146,9 +144,7 @@ pub fn seed_database(db: &Db, fresh: bool) -> Result<(bool, String), String> {
     for (account_id, amount, ago, name, merchant) in samples {
         let (category, is_sub) = categorize(name, Some(merchant));
         tx.execute(
-            r#"INSERT INTO transactions (
-                id, account_id, amount, date, name, merchant_name, category, is_subscription, pending
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)"#,
+            sql::INSERT_SEED_TRANSACTION,
             params![
                 Uuid::new_v4().to_string(),
                 account_id,
@@ -173,7 +169,7 @@ pub fn seed_database(db: &Db, fresh: bool) -> Result<(bool, String), String> {
     ];
     for (category, limit) in budgets {
         tx.execute(
-            "INSERT INTO budgets (id, category, monthly_limit) VALUES (?, ?, ?)",
+            sql::INSERT_BUDGET,
             params![Uuid::new_v4().to_string(), category, limit],
         )
         .map_err(|e| e.to_string())?;

@@ -1,5 +1,6 @@
-use crate::finance;
-use crate::models::{Account, Budget, DashboardSummary, NetWorthBreakdown, Transaction};
+use crate::db::finance;
+use crate::db::models::{Account, Budget, DashboardSummary, NetWorthBreakdown, Transaction};
+use crate::db::sql;
 use std::fmt::Write as _;
 
 fn money(v: f64) -> String {
@@ -366,11 +367,7 @@ pub fn budget_spend_this_month(
     let conn = db.lock()?;
     let mut stmt = conn
         .prepare(
-            r#"SELECT t.category, COALESCE(SUM(t.amount),0)
-               FROM transactions t
-               INNER JOIN budgets b ON b.category = t.category
-               WHERE t.date >= ? AND t.amount > 0
-               GROUP BY t.category"#,
+            sql::SELECT_BUDGET_SPEND_BY_CATEGORY,
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt

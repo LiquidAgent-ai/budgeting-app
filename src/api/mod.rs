@@ -1,10 +1,11 @@
+use crate::config::logging::error_event;
 use crate::config::Config;
+use crate::db::finance;
+use crate::db::seed;
+use crate::db::sql;
 use crate::db::Db;
-use crate::finance;
 use crate::import;
-use crate::log::error_event;
 use crate::plaid;
-use crate::seed;
 use crate::ui;
 use axum::extract::{Form, Multipart, State};
 use axum::http::{header, StatusCode};
@@ -115,10 +116,7 @@ fn insert_manual_account(db: &Db, form: &AccountForm) -> Result<(), String> {
     let bal = form.balance.unwrap_or(0.0);
     let conn = db.lock()?;
     conn.execute(
-        r#"INSERT INTO accounts (
-            id, name, type, balance_current, balance_available, currency,
-            institution_name, is_manual, include_in_net_worth
-          ) VALUES (?, ?, ?, ?, ?, 'USD', ?, 1, 1)"#,
+        sql::INSERT_MANUAL_ACCOUNT,
         rusqlite::params![
             Uuid::new_v4().to_string(),
             name,
