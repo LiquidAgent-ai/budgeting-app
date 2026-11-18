@@ -1,6 +1,6 @@
 # Anchored
 
-Anchored is a personal finance app that stays on your computer. The server is written in Rust. Your books live in an encrypted SQLite file. You can import bank and card exports (CSV, TSV, OFX, QFX, QIF) without linking an institution. Bank linking, when configured, is read-only through Plaid.
+Anchored is a personal finance app that stays on your computer. The server is written in Rust. Your books live in an encrypted SQLite file. You can import bank and card exports (CSV, TSV, OFX, QFX, QIF) without linking an institution. Bank linking, when configured, is read-only through Teller (free developer tier) or Plaid.
 
 You can run it locally, or in one container with Podman or Docker (including on TrueNAS). The published image is `ghcr.io/liquidagent-ai/budgeting-app`.
 
@@ -12,7 +12,7 @@ The installer adds Anchored to the Start menu and the desktop. Open that shortcu
 
 The books stay encrypted at `%APPDATA%\Anchored\anchored.db`. Windows seals the database key for your account in `%APPDATA%\Anchored\db-key.bin`, so you do not set `DATABASE_KEY`. A copy of the database file on its own cannot be read. Uninstalling Anchored leaves that folder in place.
 
-To link a bank, put `PLAID_CLIENT_ID`, `PLAID_SECRET`, and optional `PLAID_ENV` in `%APPDATA%\Anchored\plaid.env`. Anchored only asks Plaid for read-only access.
+To link a bank with Teller, put `TELLER_APPLICATION_ID` and optional `TELLER_ENV` in `%APPDATA%\Anchored\teller.env`. For Teller development/production, also set `TELLER_CERT_PATH` and `TELLER_KEY_PATH` to certificate files under that folder. Plaid remains available via `%APPDATA%\Anchored\plaid.env`. Anchored only asks for read-only access.
 
 ## Run locally
 
@@ -83,15 +83,29 @@ podman compose up -d --build
 
 A check of the server is `GET /api/health`.
 
-## Import statements (no Plaid)
+## Import statements (no bank API)
 
-Open **Import** in the app, pick a manual or linked account, and upload a CSV, TSV, OFX, QFX, or QIF export from your bank or card. Re-importing the same rows skips duplicates. This path never talks to Plaid.
+Open **Import** in the app, pick a manual or linked account, and upload a CSV, TSV, OFX, QFX, or QIF export from your bank or card. Re-importing the same rows skips duplicates. This path never talks to Teller or Plaid.
 
 You can also post a multipart form to `POST /api/import` with fields `account_id` and `file`.
 
 ## Bank linking
 
-To link a bank, set `PLAID_CLIENT_ID`, `PLAID_SECRET`, and optional `PLAID_ENV=sandbox` in `.env.local` or the container environment. Anchored only asks Plaid for read-only access: transactions, balances, investments, and optional liabilities. It does not request transfers, payments, Auth, or account numbers for moving money. The gate lives in `src/plaid.rs`: `READ_ONLY_PRODUCTS` / `READ_ONLY_OPTIONAL` list what Link may request, and `reject_if_not_read_only` refuses Auth, Transfer, and payment products before a link token is created.
+### Teller (free for small personal use)
+
+Create an application at [teller.io](https://teller.io/), then set:
+
+- `TELLER_APPLICATION_ID`
+- optional `TELLER_ENV=sandbox` (default), `development`, or `production`
+- for development/production: `TELLER_CERT_PATH` + `TELLER_KEY_PATH`, or `TELLER_CERT_PEM` + `TELLER_KEY_PEM`
+
+On Accounts, use **Connect a bank**. Anchored requests only `balance` and `transactions`. It refuses payments, verify, and identity (`src/teller/mod.rs`).
+
+Teller's developer tier includes up to 100 live connections at no charge. Sandbox needs no certificate.
+
+### Plaid
+
+To use Plaid instead (or as well), set `PLAID_CLIENT_ID`, `PLAID_SECRET`, and optional `PLAID_ENV=sandbox` in `.env.local` or the container environment. Anchored only asks Plaid for read-only access: transactions, balances, investments, and optional liabilities. It does not request transfers, payments, Auth, or account numbers for moving money. The gate lives in `src/plaid/mod.rs`.
 
 ## Logs
 

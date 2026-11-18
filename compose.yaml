@@ -20,6 +20,12 @@ services:
       PLAID_CLIENT_ID: ${PLAID_CLIENT_ID:-}
       PLAID_SECRET: ${PLAID_SECRET:-}
       PLAID_ENV: ${PLAID_ENV:-sandbox}
+      TELLER_APPLICATION_ID: ${TELLER_APPLICATION_ID:-}
+      TELLER_ENV: ${TELLER_ENV:-sandbox}
+      TELLER_CERT_PATH: ${TELLER_CERT_PATH:-}
+      TELLER_KEY_PATH: ${TELLER_KEY_PATH:-}
+      TELLER_CERT_PEM: ${TELLER_CERT_PEM:-}
+      TELLER_KEY_PEM: ${TELLER_KEY_PEM:-}
     volumes:
       - ${ANCHORED_DATA:-anchored-data}:/data
     restart: unless-stopped

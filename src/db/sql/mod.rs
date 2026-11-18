@@ -4,8 +4,17 @@ pub const SCHEMA: &str = include_str!("schema.sql");
 pub const SELECT_SQLITE_MASTER_COUNT: &str = include_str!("select_sqlite_master_count.sql");
 pub const SELECT_USER_TABLES: &str = include_str!("select_user_tables.sql");
 pub const PRAGMA_TABLE_INFO_PLAID_ITEMS: &str = include_str!("pragma_table_info_plaid_items.sql");
+pub const PRAGMA_TABLE_INFO_ACCOUNTS: &str = include_str!("pragma_table_info_accounts.sql");
+pub const PRAGMA_TABLE_INFO_TRANSACTIONS: &str =
+    include_str!("pragma_table_info_transactions.sql");
 pub const ALTER_PLAID_ITEMS_ADD_ACCESS_MODE: &str =
     include_str!("alter_plaid_items_add_access_mode.sql");
+pub const ALTER_ACCOUNTS_ADD_TELLER_ACCOUNT_ID: &str =
+    include_str!("alter_accounts_add_teller_account_id.sql");
+pub const ALTER_ACCOUNTS_ADD_TELLER_ENROLLMENT_ID: &str =
+    include_str!("alter_accounts_add_teller_enrollment_id.sql");
+pub const ALTER_TRANSACTIONS_ADD_TELLER_TRANSACTION_ID: &str =
+    include_str!("alter_transactions_add_teller_transaction_id.sql");
 
 pub const SELECT_ACCOUNTS: &str = include_str!("select_accounts.sql");
 pub const SELECT_MONTH_SPEND_INCOME: &str = include_str!("select_month_spend_income.sql");
@@ -31,6 +40,16 @@ pub const SELECT_TRANSACTION_ID_BY_PLAID_ID: &str =
     include_str!("select_transaction_id_by_plaid_id.sql");
 pub const UPDATE_TRANSACTION: &str = include_str!("update_transaction.sql");
 pub const INSERT_PLAID_TRANSACTION: &str = include_str!("insert_plaid_transaction.sql");
+
+pub const INSERT_TELLER_ENROLLMENT: &str = include_str!("insert_teller_enrollment.sql");
+pub const INSERT_TELLER_ACCOUNT: &str = include_str!("insert_teller_account.sql");
+pub const SELECT_TELLER_ENROLLMENTS: &str = include_str!("select_teller_enrollments.sql");
+pub const SELECT_TELLER_ACCOUNTS: &str = include_str!("select_teller_accounts.sql");
+pub const UPDATE_TELLER_ENROLLMENT_SYNC: &str = include_str!("update_teller_enrollment_sync.sql");
+pub const UPDATE_ACCOUNT_BALANCES: &str = include_str!("update_account_balances.sql");
+pub const SELECT_TRANSACTION_ID_BY_TELLER_ID: &str =
+    include_str!("select_transaction_id_by_teller_id.sql");
+pub const INSERT_TELLER_TRANSACTION: &str = include_str!("insert_teller_transaction.sql");
 
 pub const INSERT_IMPORTED_TRANSACTION: &str = include_str!("insert_imported_transaction.sql");
 pub const COUNT_ACCOUNTS_BY_ID: &str = include_str!("count_accounts_by_id.sql");

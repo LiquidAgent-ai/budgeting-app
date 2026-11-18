@@ -6,6 +6,7 @@ use crate::db::sql;
 use crate::db::Db;
 use crate::import;
 use crate::plaid;
+use crate::teller;
 use crate::ui;
 use axum::extract::{Form, Multipart, State};
 use axum::http::{header, StatusCode};
@@ -46,11 +47,14 @@ pub fn router(state: AppState) -> Router {
         .route("/api/plaid/create-link-token", post(api_plaid_link_token))
         .route("/api/plaid/exchange-token", post(api_plaid_exchange))
         .route("/api/plaid/sync", post(api_plaid_sync))
+        .route("/api/teller/status", get(api_teller_status))
+        .route("/api/teller/enroll", post(api_teller_enroll))
+        .route("/api/teller/sync", post(api_teller_sync))
         .with_state(state)
 }
 
 async fn home(State(state): State<AppState>) -> Html<String> {
-    Html(ui::landing(state.config.plaid_configured()))
+    Html(ui::landing(state.config.bank_linking_configured()))
 }
 
 async fn dashboard_page(State(state): State<AppState>) -> Response {
@@ -66,7 +70,12 @@ async fn dashboard_page(State(state): State<AppState>) -> Response {
 
 async fn accounts_page(State(state): State<AppState>) -> Response {
     match finance::list_accounts(&state.db) {
-        Ok(a) => Html(ui::accounts_page(&a)).into_response(),
+        Ok(a) => Html(ui::accounts_page(
+            &a,
+            teller::status(&state.config),
+            state.config.plaid_configured(),
+        ))
+        .into_response(),
         Err(_) => {
             error_event("accounts page failed");
             (
@@ -422,6 +431,33 @@ async fn api_plaid_sync(State(state): State<AppState>) -> Response {
         Ok(v) => Json(v).into_response(),
         Err(e) => {
             error_event("plaid sync failed");
+            (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response()
+        }
+    }
+}
+
+async fn api_teller_status(State(state): State<AppState>) -> Json<teller::TellerStatus> {
+    Json(teller::status(&state.config))
+}
+
+async fn api_teller_enroll(
+    State(state): State<AppState>,
+    Json(body): Json<teller::EnrollBody>,
+) -> Response {
+    match teller::enroll(&state.config, &state.db, body).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => {
+            error_event("teller enroll failed");
+            (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response()
+        }
+    }
+}
+
+async fn api_teller_sync(State(state): State<AppState>) -> Response {
+    match teller::sync_all(&state.config, &state.db).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => {
+            error_event("teller sync failed");
             (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response()
         }
     }

@@ -1,6 +1,7 @@
 use crate::db::finance;
 use crate::db::models::{Account, Budget, DashboardSummary, NetWorthBreakdown, Transaction};
 use crate::db::sql;
+use crate::teller::TellerStatus;
 use std::fmt::Write as _;
 
 fn money(v: f64) -> String {
@@ -59,11 +60,11 @@ fn layout(title: &str, active: &str, body: &str) -> String {
     )
 }
 
-pub fn landing(plaid_ready: bool) -> String {
-    let plaid = if plaid_ready {
-        "<p class=\"muted\">Bank linking is configured (read-only).</p>"
+pub fn landing(bank_ready: bool) -> String {
+    let bank = if bank_ready {
+        "<p class=\"muted\">Bank linking is configured (read-only via Teller or Plaid).</p>"
     } else {
-        "<p class=\"muted\">Add Plaid sandbox keys to link banks. Demo data works without them.</p>"
+        "<p class=\"muted\">Add a free Teller application id (or Plaid sandbox keys) to link banks. Demo data and CSV/OFX import work without them.</p>"
     };
     format!(
         r#"<!DOCTYPE html>
@@ -80,7 +81,7 @@ pub fn landing(plaid_ready: bool) -> String {
     <h1>Your books stay on this machine.</h1>
     <p class="lede">Encrypted SQLite, CSV/OFX imports or read-only bank linking, and a clear view of spend, budgets, and net worth.</p>
     <p class="cta"><a class="btn" href="/dashboard">Open dashboard</a> <a class="btn btn-quiet" href="/import">Import a statement</a></p>
-    {plaid}
+    {bank}
   </section>
 </body>
 </html>"#
@@ -149,7 +150,11 @@ pub fn dashboard(summary: &DashboardSummary) -> String {
     layout("Dashboard", "dashboard", &body)
 }
 
-pub fn accounts_page(accounts: &[Account]) -> String {
+pub fn accounts_page(
+    accounts: &[Account],
+    teller: TellerStatus,
+    plaid_ready: bool,
+) -> String {
     let mut rows = String::new();
     for a in accounts {
         let _ = write!(
@@ -162,9 +167,107 @@ pub fn accounts_page(accounts: &[Account]) -> String {
             money(a.balance_current)
         );
     }
+
+    let link_panel = if teller.configured {
+        let app_id = esc(teller.application_id.as_deref().unwrap_or(""));
+        let env = esc(&teller.env);
+        let cert_note = if teller.certificate_ready {
+            ""
+        } else {
+            "<p class=\"muted\">Development/production also needs a Teller client certificate on the server.</p>"
+        };
+        format!(
+            r#"<section class="panel bank-link" id="teller-link">
+  <h2>Link with Teller</h2>
+  <p class="muted">Read-only balances and transactions. Anchored never requests payments, verify, or identity.</p>
+  {cert_note}
+  <p class="bank-actions">
+    <button type="button" class="btn" id="teller-connect-btn">Connect a bank</button>
+    <button type="button" class="btn btn-quiet" id="teller-sync-btn">Sync Teller</button>
+  </p>
+  <p class="muted" id="teller-status" aria-live="polite"></p>
+</section>
+<script src="https://cdn.teller.io/connect/connect.js"></script>
+<script>
+(function () {{
+  var statusEl = document.getElementById("teller-status");
+  function setStatus(msg) {{ if (statusEl) statusEl.textContent = msg || ""; }}
+  var connectBtn = document.getElementById("teller-connect-btn");
+  var syncBtn = document.getElementById("teller-sync-btn");
+  if (typeof TellerConnect === "undefined") {{
+    setStatus("Teller Connect could not load. Check network access to cdn.teller.io.");
+    if (connectBtn) connectBtn.disabled = true;
+  }} else if (connectBtn) {{
+    var tellerConnect = TellerConnect.setup({{
+      applicationId: "{app_id}",
+      environment: "{env}",
+      products: ["balance", "transactions"],
+      onSuccess: function (enrollment) {{
+        setStatus("Saving linked accounts…");
+        fetch("/api/teller/enroll", {{
+          method: "POST",
+          headers: {{ "content-type": "application/json" }},
+          body: JSON.stringify({{
+            access_token: enrollment.accessToken,
+            enrollment: enrollment.enrollment,
+            user: enrollment.user
+          }})
+        }}).then(function (res) {{
+          return res.json().then(function (body) {{
+            if (!res.ok) throw new Error(body.error || "Could not save enrollment");
+            setStatus("Linked. Reloading…");
+            window.location.reload();
+          }});
+        }}).catch(function (err) {{
+          setStatus(err.message || "Could not save enrollment");
+        }});
+      }},
+      onExit: function () {{ setStatus(""); }}
+    }});
+    connectBtn.addEventListener("click", function () {{ tellerConnect.open(); }});
+  }}
+  if (syncBtn) {{
+    syncBtn.addEventListener("click", function () {{
+      setStatus("Syncing…");
+      syncBtn.disabled = true;
+      fetch("/api/teller/sync", {{ method: "POST" }})
+        .then(function (res) {{
+          return res.json().then(function (body) {{
+            if (!res.ok) throw new Error(body.error || "Sync failed");
+            setStatus("Synced " + (body.enrollments || 0) + " enrollment(s). Reloading…");
+            window.location.reload();
+          }});
+        }})
+        .catch(function (err) {{
+          setStatus(err.message || "Sync failed");
+          syncBtn.disabled = false;
+        }});
+    }});
+  }}
+}})();
+</script>"#,
+            app_id = app_id,
+            env = env,
+            cert_note = cert_note
+        )
+    } else if plaid_ready {
+        r#"<section class="panel bank-link">
+  <h2>Bank linking</h2>
+  <p class="muted">Plaid is configured (read-only). Add <code>TELLER_APPLICATION_ID</code> for free Teller linking, or use Import for statement files.</p>
+</section>"#
+            .to_string()
+    } else {
+        r#"<section class="panel bank-link">
+  <h2>Bank linking</h2>
+  <p class="muted">Set <code>TELLER_APPLICATION_ID</code> (free developer tier) or Plaid keys to link banks read-only. You can still add manual accounts or use Import.</p>
+</section>"#
+            .to_string()
+    };
+
     let body = format!(
         r#"<h1>Accounts</h1>
 <p class="muted">Balances on this computer. Linked banks stay read-only.</p>
+{link_panel}
 <form class="panel" method="post" action="/accounts">
   <h2>Add manual account</h2>
   <div class="grid">
@@ -188,6 +291,7 @@ pub fn accounts_page(accounts: &[Account]) -> String {
   <thead><tr><th>Name</th><th>Type</th><th>Institution</th><th>Mask</th><th class="num">Balance</th></tr></thead>
   <tbody>{rows}</tbody>
 </table>"#,
+        link_panel = link_panel,
         rows = rows
     );
     layout("Accounts", "accounts", &body)
@@ -208,7 +312,7 @@ pub fn transactions_page(txns: &[Transaction]) -> String {
     }
     let body = format!(
         r#"<h1>Transactions</h1>
-<p class="muted">Load a bank or card export on <a href="/import">Import</a> when you are not using Plaid.</p>
+<p class="muted">Load a bank or card export on <a href="/import">Import</a> when you are not using Teller or Plaid.</p>
 <table>
   <thead><tr><th>Date</th><th>Account</th><th>Name</th><th>Category</th><th class="num">Amount</th></tr></thead>
   <tbody>{rows}</tbody>
@@ -243,7 +347,7 @@ pub fn import_page(accounts: &[Account], notice: Option<String>) -> String {
     };
     let body = format!(
         r#"<h1>Import</h1>
-<p class="muted">Bring in transactions from a bank or credit-card export without connecting Plaid. Supports CSV, TSV, OFX, QFX, and QIF.</p>
+<p class="muted">Bring in transactions from a bank or credit-card export without connecting Teller or Plaid. Supports CSV, TSV, OFX, QFX, and QIF.</p>
 {notice}
 {empty}
 <form class="panel" method="post" action="/import" enctype="multipart/form-data">

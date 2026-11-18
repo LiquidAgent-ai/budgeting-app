@@ -368,7 +368,52 @@ fn migrate(conn: &Connection, existing: bool) -> Result<bool, String> {
     };
     if !cols.iter().any(|c| c == "access_mode") {
         conn.execute(sql::ALTER_PLAID_ITEMS_ADD_ACCESS_MODE, [])
-        .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?;
+        if existing {
+            changed = true;
+        }
+    }
+
+    let account_cols: Vec<String> = {
+        let mut stmt = conn
+            .prepare(sql::PRAGMA_TABLE_INFO_ACCOUNTS)
+            .map_err(|e| e.to_string())?;
+        let names = stmt
+            .query_map([], |r| r.get::<_, String>(1))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string())?;
+        names
+    };
+    if !account_cols.iter().any(|c| c == "teller_account_id") {
+        conn.execute(sql::ALTER_ACCOUNTS_ADD_TELLER_ACCOUNT_ID, [])
+            .map_err(|e| e.to_string())?;
+        if existing {
+            changed = true;
+        }
+    }
+    if !account_cols.iter().any(|c| c == "teller_enrollment_id") {
+        conn.execute(sql::ALTER_ACCOUNTS_ADD_TELLER_ENROLLMENT_ID, [])
+            .map_err(|e| e.to_string())?;
+        if existing {
+            changed = true;
+        }
+    }
+
+    let txn_cols: Vec<String> = {
+        let mut stmt = conn
+            .prepare(sql::PRAGMA_TABLE_INFO_TRANSACTIONS)
+            .map_err(|e| e.to_string())?;
+        let names = stmt
+            .query_map([], |r| r.get::<_, String>(1))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string())?;
+        names
+    };
+    if !txn_cols.iter().any(|c| c == "teller_transaction_id") {
+        conn.execute(sql::ALTER_TRANSACTIONS_ADD_TELLER_TRANSACTION_ID, [])
+            .map_err(|e| e.to_string())?;
         if existing {
             changed = true;
         }
