@@ -1,5 +1,6 @@
-use crate::finance;
-use crate::models::{Account, Budget, DashboardSummary, NetWorthBreakdown, Transaction};
+use crate::db::finance;
+use crate::db::models::{Account, Budget, DashboardSummary, NetWorthBreakdown, Transaction};
+use crate::db::sql;
 use std::fmt::Write as _;
 
 fn money(v: f64) -> String {
@@ -35,6 +36,7 @@ fn layout(title: &str, active: &str, body: &str) -> String {
     {dashboard}
     {accounts}
     {transactions}
+    {import}
     {budgets}
     {networth}
     {subscriptions}
@@ -49,6 +51,7 @@ fn layout(title: &str, active: &str, body: &str) -> String {
         dashboard = nav("dashboard", "/dashboard", "Dashboard"),
         accounts = nav("accounts", "/accounts", "Accounts"),
         transactions = nav("transactions", "/transactions", "Transactions"),
+        import = nav("import", "/import", "Import"),
         budgets = nav("budgets", "/budgets", "Budgets"),
         networth = nav("net-worth", "/net-worth", "Net worth"),
         subscriptions = nav("subscriptions", "/subscriptions", "Subscriptions"),
@@ -75,8 +78,8 @@ pub fn landing(plaid_ready: bool) -> String {
   <section class="hero">
     <p class="brand-mark">Anchored</p>
     <h1>Your books stay on this machine.</h1>
-    <p class="lede">Encrypted SQLite, read-only bank linking, and a clear view of spend, budgets, and net worth.</p>
-    <p class="cta"><a class="btn" href="/dashboard">Open dashboard</a></p>
+    <p class="lede">Encrypted SQLite, CSV/OFX imports or read-only bank linking, and a clear view of spend, budgets, and net worth.</p>
+    <p class="cta"><a class="btn" href="/dashboard">Open dashboard</a> <a class="btn btn-quiet" href="/import">Import a statement</a></p>
     {plaid}
   </section>
 </body>
@@ -205,6 +208,7 @@ pub fn transactions_page(txns: &[Transaction]) -> String {
     }
     let body = format!(
         r#"<h1>Transactions</h1>
+<p class="muted">Load a bank or card export on <a href="/import">Import</a> when you are not using Plaid.</p>
 <table>
   <thead><tr><th>Date</th><th>Account</th><th>Name</th><th>Category</th><th class="num">Amount</th></tr></thead>
   <tbody>{rows}</tbody>
@@ -212,6 +216,54 @@ pub fn transactions_page(txns: &[Transaction]) -> String {
         rows = rows
     );
     layout("Transactions", "transactions", &body)
+}
+
+pub fn import_page(accounts: &[Account], notice: Option<String>) -> String {
+    let mut options = String::from(r#"<option value="">Select account</option>"#);
+    for a in accounts {
+        let label = match a.institution_name.as_deref() {
+            Some(inst) if !inst.is_empty() => format!("{} · {} ({})", a.name, inst, a.account_type),
+            _ => format!("{} ({})", a.name, a.account_type),
+        };
+        let _ = write!(
+            options,
+            r#"<option value="{}">{}</option>"#,
+            esc(&a.id),
+            esc(&label)
+        );
+    }
+    let notice_html = match notice {
+        Some(msg) => format!(r#"<p class="notice">{}</p>"#, esc(&msg)),
+        None => String::new(),
+    };
+    let empty = if accounts.is_empty() {
+        r#"<p class="muted">Add a manual account first, then import into it.</p>"#
+    } else {
+        ""
+    };
+    let body = format!(
+        r#"<h1>Import</h1>
+<p class="muted">Bring in transactions from a bank or credit-card export without connecting Plaid. Supports CSV, TSV, OFX, QFX, and QIF.</p>
+{notice}
+{empty}
+<form class="panel" method="post" action="/import" enctype="multipart/form-data">
+  <h2>Statement file</h2>
+  <div class="grid">
+    <label>Account
+      <select name="account_id" required>{options}</select>
+    </label>
+    <label>File
+      <input name="file" type="file" accept=".csv,.tsv,.txt,.ofx,.qfx,.qif,text/csv,application/x-ofx,application/vnd.intu.qfx" required/>
+    </label>
+  </div>
+  <button type="submit" class="btn">Import transactions</button>
+</form>
+<p class="muted">Amounts follow the same sign as Plaid: spend is positive, income is negative. Re-importing the same rows skips duplicates.</p>"#,
+        notice = notice_html,
+        empty = empty,
+        options = options
+    );
+    layout("Import", "import", &body)
 }
 
 pub fn budgets_page(budgets: &[Budget], spent: &[(String, f64)]) -> String {
@@ -315,11 +367,7 @@ pub fn budget_spend_this_month(
     let conn = db.lock()?;
     let mut stmt = conn
         .prepare(
-            r#"SELECT t.category, COALESCE(SUM(t.amount),0)
-               FROM transactions t
-               INNER JOIN budgets b ON b.category = t.category
-               WHERE t.date >= ? AND t.amount > 0
-               GROUP BY t.category"#,
+            sql::SELECT_BUDGET_SPEND_BY_CATEGORY,
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt

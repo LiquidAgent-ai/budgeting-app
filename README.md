@@ -1,6 +1,6 @@
 # Anchored
 
-Anchored is a personal finance app that stays on your computer. The server is written in Rust. Your books live in an encrypted SQLite file. Bank linking, when configured, is read-only through Plaid.
+Anchored is a personal finance app that stays on your computer. The server is written in Rust. Your books live in an encrypted SQLite file. You can import bank and card exports (CSV, TSV, OFX, QFX, QIF) without linking an institution. Bank linking, when configured, is read-only through Plaid.
 
 You can run it locally, or in one container with Podman or Docker (including on TrueNAS). The published image is `ghcr.io/liquidagent-ai/budgeting-app`.
 
@@ -83,9 +83,15 @@ podman compose up -d --build
 
 A check of the server is `GET /api/health`.
 
+## Import statements (no Plaid)
+
+Open **Import** in the app, pick a manual or linked account, and upload a CSV, TSV, OFX, QFX, or QIF export from your bank or card. Re-importing the same rows skips duplicates. This path never talks to Plaid.
+
+You can also post a multipart form to `POST /api/import` with fields `account_id` and `file`.
+
 ## Bank linking
 
-To link a bank, set `PLAID_CLIENT_ID`, `PLAID_SECRET`, and optional `PLAID_ENV=sandbox` in `.env.local` or the container environment. Anchored only asks Plaid for read-only access: transactions, balances, investments, and optional liabilities. It does not request transfers, payments, Auth, or account numbers for moving money.
+To link a bank, set `PLAID_CLIENT_ID`, `PLAID_SECRET`, and optional `PLAID_ENV=sandbox` in `.env.local` or the container environment. Anchored only asks Plaid for read-only access: transactions, balances, investments, and optional liabilities. It does not request transfers, payments, Auth, or account numbers for moving money. The gate lives in `src/plaid.rs`: `READ_ONLY_PRODUCTS` / `READ_ONLY_OPTIONAL` list what Link may request, and `reject_if_not_read_only` refuses Auth, Transfer, and payment products before a link token is created.
 
 ## Logs
 

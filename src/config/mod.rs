@@ -1,3 +1,5 @@
+pub mod logging;
+
 use std::env;
 use std::path::PathBuf;
 

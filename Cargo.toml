@@ -7,7 +7,7 @@ license = "MIT"
 publish = false
 
 [dependencies]
-axum = { version = "0.8", features = ["form", "macros"] }
+axum = { version = "0.8", features = ["form", "macros", "multipart"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl"] }
