@@ -154,6 +154,12 @@ input, select {
   border: 1px solid var(--line);
   margin-left: 0.5rem;
 }
+.bank-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.bank-actions .btn-quiet { margin-left: 0; }
+.bank-link code {
+  font-size: 0.85em;
+  color: var(--ink);
+}
 .notice {
   padding: 0.85rem 1rem;
   border: 1px solid var(--line);

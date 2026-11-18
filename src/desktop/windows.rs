@@ -37,6 +37,7 @@ pub fn run() -> Result<(), String> {
     apply_desktop_env(&root, &key, port);
     drop(key);
     load_plaid_file(&root.join("plaid.env"));
+    load_teller_file(&root.join("teller.env"));
 
     let config = Config::from_env()?;
     let (tx, rx) = std::sync::mpsc::channel();
@@ -329,6 +330,45 @@ fn load_plaid_file(path: &Path) {
     }
 }
 
+fn load_teller_file(path: &Path) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let mut loaded = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key != "TELLER_APPLICATION_ID"
+            && key != "TELLER_ENV"
+            && key != "TELLER_CERT_PATH"
+            && key != "TELLER_KEY_PATH"
+        {
+            continue;
+        }
+        let mut value = value.trim().to_string();
+        if (value.starts_with('"') && value.ends_with('"') && value.len() >= 2)
+            || (value.starts_with('\'') && value.ends_with('\'') && value.len() >= 2)
+        {
+            value = value[1..value.len() - 1].to_string();
+        }
+        if value.is_empty() || value == "your_application_id" {
+            continue;
+        }
+        // SAFETY: still before the server thread starts.
+        unsafe { std::env::set_var(key, value) };
+        loaded = true;
+    }
+    if loaded {
+        info_event("teller configuration file loaded");
+    }
+}
+
 fn free_loopback_port() -> Result<u16, String> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
         .map_err(|_| "Anchored could not choose a local port.".to_string())?;
@@ -413,7 +453,14 @@ fn open_window(port: u16) -> Result<(), String> {
         .with_download_started_handler(|_url, _path| false)
         .with_new_window_req_handler(|_url, _features| wry::NewWindowResponse::Deny)
         .with_navigation_handler(move |url| {
-            url == "about:blank" || url == allowed || url.starts_with(&format!("{allowed}/"))
+            url == "about:blank"
+                || url == allowed
+                || url.starts_with(&format!("{allowed}/"))
+                // Teller Connect (and bank OAuth handoff pages hosted by Teller).
+                || url.starts_with("https://teller.io/")
+                || url.starts_with("https://www.teller.io/")
+                || url.starts_with("https://cdn.teller.io/")
+                || url.starts_with("https://api.teller.io/")
         })
         .build(&window)
         .map_err(|err| window_error(&err.to_string()))?;

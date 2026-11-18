@@ -7,6 +7,7 @@ mod desktop;
 mod import;
 mod plaid;
 mod server;
+mod teller;
 mod ui;
 
 use crate::config::Config;

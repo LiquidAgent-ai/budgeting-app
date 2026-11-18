@@ -67,7 +67,7 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.title=budgeting-app
             org.opencontainers.image.description=Anchored
-          # DATABASE_KEY and Plaid keys stay runtime environment variables.
+          # DATABASE_KEY, Teller, and Plaid keys stay runtime environment variables.
           # This step passes no build-args and no secrets.
 
       - name: Make the package public
