@@ -6,6 +6,7 @@ mod db;
 #[cfg(windows)]
 mod desktop;
 mod finance;
+mod import;
 mod key_material;
 mod log;
 mod models;

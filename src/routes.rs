@@ -1,11 +1,12 @@
 use crate::config::Config;
 use crate::db::Db;
 use crate::finance;
+use crate::import;
 use crate::log::error_event;
 use crate::plaid;
 use crate::seed;
 use crate::ui;
-use axum::extract::{Form, State};
+use axum::extract::{Form, Multipart, State};
 use axum::http::{header, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
@@ -27,6 +28,7 @@ pub fn router(state: AppState) -> Router {
         .route("/dashboard", get(dashboard_page))
         .route("/accounts", get(accounts_page).post(create_account_form))
         .route("/transactions", get(transactions_page))
+        .route("/import", get(import_page).post(import_form))
         .route("/budgets", get(budgets_page))
         .route("/net-worth", get(net_worth_page))
         .route("/subscriptions", get(subscriptions_page))
@@ -34,6 +36,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/dashboard", get(api_dashboard))
         .route("/api/accounts", get(api_accounts).post(api_create_account))
         .route("/api/transactions", get(api_transactions))
+        .route("/api/import", post(api_import))
         .route("/api/budgets", get(api_budgets))
         .route("/api/net-worth", get(api_net_worth))
         .route("/api/subscriptions", get(api_subscriptions))
@@ -143,6 +146,107 @@ async fn transactions_page(State(state): State<AppState>) -> Response {
     }
 }
 
+async fn import_page(State(state): State<AppState>) -> Response {
+    match finance::list_accounts(&state.db) {
+        Ok(a) => Html(ui::import_page(&a, None)).into_response(),
+        Err(_) => {
+            error_event("import page failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(ui::error_page("Could not load accounts for import.")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn import_form(State(state): State<AppState>, multipart: Multipart) -> Response {
+    match read_import_upload(multipart).await {
+        Ok((account_id, filename, bytes)) => {
+            match import::import_bytes(&state.db, &account_id, &filename, &bytes) {
+                Ok(result) => {
+                    let msg = format!(
+                        "Imported {imported} transactions from {format} ({skipped} already present).",
+                        imported = result.imported,
+                        format = result.format,
+                        skipped = result.skipped
+                    );
+                    match finance::list_accounts(&state.db) {
+                        Ok(a) => Html(ui::import_page(&a, Some(msg))).into_response(),
+                        Err(_) => Redirect::to("/transactions").into_response(),
+                    }
+                }
+                Err(e) => {
+                    error_event("import failed");
+                    match finance::list_accounts(&state.db) {
+                        Ok(a) => Html(ui::import_page(&a, Some(e))).into_response(),
+                        Err(_) => (
+                            StatusCode::BAD_REQUEST,
+                            Html(ui::error_page(&e)),
+                        )
+                            .into_response(),
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            error_event("import upload failed");
+            match finance::list_accounts(&state.db) {
+                Ok(a) => Html(ui::import_page(&a, Some(e))).into_response(),
+                Err(_) => (
+                    StatusCode::BAD_REQUEST,
+                    Html(ui::error_page(&e)),
+                )
+                    .into_response(),
+            }
+        }
+    }
+}
+
+async fn read_import_upload(
+    mut multipart: Multipart,
+) -> Result<(String, String, Vec<u8>), String> {
+    let mut account_id = String::new();
+    let mut filename = String::from("upload.csv");
+    let mut bytes: Option<Vec<u8>> = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|_| "Could not read the uploaded file.".to_string())?
+    {
+        let name = field.name().unwrap_or("").to_string();
+        if name == "account_id" {
+            account_id = field
+                .text()
+                .await
+                .map_err(|_| "Could not read the account field.".to_string())?;
+            continue;
+        }
+        if name == "file" {
+            if let Some(f) = field.file_name() {
+                if !f.trim().is_empty() {
+                    filename = f.to_string();
+                }
+            }
+            let data = field
+                .bytes()
+                .await
+                .map_err(|_| "Could not read the uploaded file.".to_string())?;
+            if data.len() > 8 * 1024 * 1024 {
+                return Err("That file is larger than 8 MB.".into());
+            }
+            bytes = Some(data.to_vec());
+        }
+    }
+
+    let bytes = bytes.ok_or_else(|| "Choose a CSV, OFX, QFX, or QIF file.".to_string())?;
+    if bytes.is_empty() {
+        return Err("The uploaded file was empty.".into());
+    }
+    Ok((account_id, filename, bytes))
+}
+
 async fn budgets_page(State(state): State<AppState>) -> Response {
     match (finance::list_budgets(&state.db), ui::budget_spend_this_month(&state.db)) {
         (Ok(b), Ok(s)) => Html(ui::budgets_page(&b, &s)).into_response(),
@@ -230,6 +334,24 @@ async fn api_create_account(
 
 async fn api_transactions(State(state): State<AppState>) -> Response {
     json_result(finance::list_transactions(&state.db, 200))
+}
+
+async fn api_import(State(state): State<AppState>, multipart: Multipart) -> Response {
+    match read_import_upload(multipart).await {
+        Ok((account_id, filename, bytes)) => {
+            match import::import_bytes(&state.db, &account_id, &filename, &bytes) {
+                Ok(result) => Json(import::import_result_json(result)).into_response(),
+                Err(e) => {
+                    error_event("api import failed");
+                    (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response()
+                }
+            }
+        }
+        Err(e) => {
+            error_event("api import upload failed");
+            (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response()
+        }
+    }
 }
 
 async fn api_budgets(State(state): State<AppState>) -> Response {

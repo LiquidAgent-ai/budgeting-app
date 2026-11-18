@@ -13,6 +13,32 @@ use uuid::Uuid;
 const READ_ONLY_PRODUCTS: &[&str] = &["transactions", "investments"];
 const READ_ONLY_OPTIONAL: &[&str] = &["liabilities", "recurring_transactions"];
 
+/// Products that would allow moving money or pulling account/routing numbers.
+const FORBIDDEN_PLAID_PRODUCTS: &[&str] = &[
+    "auth",
+    "transfer",
+    "payment_initiation",
+    "deposit_switch",
+    "income",
+    "income_verification",
+];
+
+/// Returns an error if any product would leave read-only mode.
+fn reject_if_not_read_only(products: &[&str]) -> Result<(), String> {
+    for product in products {
+        let lower = product.to_ascii_lowercase();
+        if FORBIDDEN_PLAID_PRODUCTS
+            .iter()
+            .any(|blocked| *blocked == lower)
+        {
+            return Err(format!(
+                "Refusing Plaid product '{product}': Anchored is read-only and does not request transfers, payments, or Auth."
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Serialize)]
 pub struct PlaidStatus {
     pub configured: bool,
@@ -81,6 +107,9 @@ pub async fn create_link_token(cfg: &Config, body: CreateLinkTokenBody) -> Resul
     if !cfg.plaid_configured() {
         return Err("Plaid is not configured. Add PLAID_CLIENT_ID and PLAID_SECRET.".into());
     }
+    // Hard gate: never send Auth / Transfer / Payment products to Plaid.
+    reject_if_not_read_only(READ_ONLY_PRODUCTS)?;
+    reject_if_not_read_only(READ_ONLY_OPTIONAL)?;
     let user_id = body
         .client_user_id
         .unwrap_or_else(|| "anchored-local".into());
@@ -392,6 +421,21 @@ fn upsert_transaction(
         .map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_only_products_reject_auth_transfer_and_payments() {
+        assert!(reject_if_not_read_only(READ_ONLY_PRODUCTS).is_ok());
+        assert!(reject_if_not_read_only(READ_ONLY_OPTIONAL).is_ok());
+        assert!(reject_if_not_read_only(&["auth"]).is_err());
+        assert!(reject_if_not_read_only(&["transfer"]).is_err());
+        assert!(reject_if_not_read_only(&["payment_initiation"]).is_err());
+        assert!(reject_if_not_read_only(&["transactions", "auth"]).is_err());
+    }
 }
 
 fn map_account_type(ty: &str, subtype: Option<&str>) -> &'static str {
