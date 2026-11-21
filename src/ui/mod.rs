@@ -362,7 +362,7 @@ pub fn import_page(accounts: &[Account], notice: Option<String>) -> String {
   </div>
   <button type="submit" class="btn">Import transactions</button>
 </form>
-<p class="muted">Amounts follow the same sign as Plaid: spend is positive, income is negative. Re-importing the same rows skips duplicates.</p>"#,
+<p class="muted">Amounts follow the same sign as Plaid: spend is positive, income is negative. Duplicates are skipped — same file twice, QFX then bank sync, or matching spend already on the account.</p>"#,
         notice = notice_html,
         empty = empty,
         options = options

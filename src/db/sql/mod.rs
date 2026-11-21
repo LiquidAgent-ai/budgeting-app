@@ -53,8 +53,9 @@ pub const INSERT_TELLER_TRANSACTION: &str = include_str!("insert_teller_transact
 
 pub const INSERT_IMPORTED_TRANSACTION: &str = include_str!("insert_imported_transaction.sql");
 pub const COUNT_ACCOUNTS_BY_ID: &str = include_str!("count_accounts_by_id.sql");
-pub const COUNT_TRANSACTIONS_BY_PLAID_ID: &str =
-    include_str!("count_transactions_by_plaid_id.sql");
+pub const SELECT_DUPLICATE_CANDIDATES: &str = include_str!("select_duplicate_candidates.sql");
+pub const LINK_PLAID_TRANSACTION_ID: &str = include_str!("link_plaid_transaction_id.sql");
+pub const LINK_TELLER_TRANSACTION_ID: &str = include_str!("link_teller_transaction_id.sql");
 
 pub const INSERT_MANUAL_ACCOUNT: &str = include_str!("insert_manual_account.sql");
 

@@ -2,11 +2,13 @@
 
 use crate::config::logging::{error_event, info_event};
 use crate::db::categories::categorize;
+use crate::db::duplicates::{self, DuplicateDecision, IncomingTxn};
 use crate::db::sql;
 use crate::db::Db;
 use rusqlite::params;
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -49,15 +51,43 @@ pub fn import_bytes(
 
     let mut imported = 0usize;
     let mut skipped = 0usize;
+    let mut seen_in_file: HashSet<String> = HashSet::new();
     {
         let conn = db.lock()?;
         let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
         for row in &rows {
             let fingerprint = import_id(account_id, row);
-            if txn_exists(&tx, &fingerprint)? {
+            let in_file_key = duplicates::batch_key(
+                account_id,
+                &row.date,
+                row.amount,
+                &row.name,
+                row.merchant_name.as_deref(),
+            );
+            if !seen_in_file.insert(in_file_key) {
                 skipped += 1;
                 continue;
             }
+
+            let incoming = IncomingTxn {
+                account_id,
+                date: &row.date,
+                amount: row.amount,
+                name: &row.name,
+                merchant_name: row.merchant_name.as_deref(),
+                plaid_transaction_id: None,
+                teller_transaction_id: None,
+                import_fingerprint: Some(&fingerprint),
+            };
+            match duplicates::classify(&tx, &incoming)? {
+                DuplicateDecision::SameProvider { .. }
+                | DuplicateDecision::ContentMatch { .. } => {
+                    skipped += 1;
+                    continue;
+                }
+                DuplicateDecision::New => {}
+            }
+
             let (category, is_sub) = categorize(&row.name, row.merchant_name.as_deref());
             tx.execute(
                 sql::INSERT_IMPORTED_TRANSACTION,
@@ -114,17 +144,6 @@ fn ensure_account(db: &Db, account_id: &str) -> Result<(), String> {
         return Err("That account was not found.".into());
     }
     Ok(())
-}
-
-fn txn_exists(conn: &rusqlite::Connection, fingerprint: &str) -> Result<bool, String> {
-    let n: i64 = conn
-        .query_row(
-            sql::COUNT_TRANSACTIONS_BY_PLAID_ID,
-            params![fingerprint],
-            |r| r.get(0),
-        )
-        .map_err(|e| e.to_string())?;
-    Ok(n > 0)
 }
 
 fn import_id(account_id: &str, row: &ParsedTxn) -> String {
