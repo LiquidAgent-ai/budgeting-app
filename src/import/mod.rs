@@ -1,8 +1,8 @@
 //! Import bank and card exports (CSV, TSV, OFX, QFX, QIF) without Plaid.
 
 use crate::config::logging::{error_event, info_event};
-use crate::db::categories::categorize;
 use crate::db::duplicates::{self, DuplicateDecision, IncomingTxn};
+use crate::db::rules;
 use crate::db::sql;
 use crate::db::Db;
 use rusqlite::params;
@@ -88,23 +88,27 @@ pub fn import_bytes(
                 DuplicateDecision::New => {}
             }
 
-            let (category, is_sub) = categorize(&row.name, row.merchant_name.as_deref());
+            let hit = rules::categorize(&*tx, &row.name, row.merchant_name.as_deref());
+            let txn_id = Uuid::new_v4().to_string();
             tx.execute(
                 sql::INSERT_IMPORTED_TRANSACTION,
                 params![
-                    Uuid::new_v4().to_string(),
+                    txn_id,
                     account_id,
                     fingerprint,
                     row.amount,
                     row.date,
                     row.name,
                     row.merchant_name,
-                    category,
-                    if is_sub { 1 } else { 0 },
+                    hit.category,
+                    if hit.is_subscription { 1 } else { 0 },
                     format!("imported:{format}"),
                 ],
             )
             .map_err(|e| e.to_string())?;
+            if !hit.tags.is_empty() {
+                rules::set_transaction_tags(&*tx, &txn_id, &hit.tags)?;
+            }
             imported += 1;
         }
         tx.commit().map_err(|e| e.to_string())?;

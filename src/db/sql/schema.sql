@@ -74,6 +74,32 @@ CREATE TABLE IF NOT EXISTS budgets (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS tags (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS transaction_tags (
+  transaction_id TEXT NOT NULL,
+  tag_id TEXT NOT NULL,
+  PRIMARY KEY (transaction_id, tag_id),
+  FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE CASCADE,
+  FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS category_rules (
+  id TEXT PRIMARY KEY,
+  pattern TEXT NOT NULL,
+  match_field TEXT NOT NULL DEFAULT 'either',
+  category TEXT NOT NULL,
+  tags TEXT,
+  is_subscription INTEGER NOT NULL DEFAULT 0,
+  priority INTEGER NOT NULL DEFAULT 100,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_plaid_id
   ON transactions(plaid_transaction_id) WHERE plaid_transaction_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_teller_id
@@ -83,3 +109,7 @@ CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category);
 CREATE INDEX IF NOT EXISTS idx_transactions_account_date_amount
   ON transactions(account_id, date, amount);
+CREATE INDEX IF NOT EXISTS idx_category_rules_priority
+  ON category_rules(enabled, priority, created_at);
+CREATE INDEX IF NOT EXISTS idx_transaction_tags_tag
+  ON transaction_tags(tag_id);
