@@ -34,6 +34,7 @@ pub const INSERT_PLAID_ACCOUNT: &str = include_str!("insert_plaid_account.sql");
 pub const SELECT_PLAID_ITEMS: &str = include_str!("select_plaid_items.sql");
 pub const DELETE_TRANSACTION_BY_PLAID_ID: &str =
     include_str!("delete_transaction_by_plaid_id.sql");
+pub const DELETE_ACCOUNT: &str = include_str!("delete_account.sql");
 pub const UPDATE_PLAID_ITEM_CURSOR: &str = include_str!("update_plaid_item_cursor.sql");
 pub const SELECT_ACCOUNT_BY_PLAID_IDS: &str = include_str!("select_account_by_plaid_ids.sql");
 pub const SELECT_TRANSACTION_ID_BY_PLAID_ID: &str =

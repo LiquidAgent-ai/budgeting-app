@@ -29,6 +29,8 @@ pub fn router(state: AppState) -> Router {
         .route("/", get(home))
         .route("/dashboard", get(dashboard_page))
         .route("/accounts", get(accounts_page).post(create_account_form))
+        .route("/accounts/delete", post(delete_account_form))
+        .route("/accounts/seed", post(seed_accounts_form))
         .route("/transactions", get(transactions_page))
         .route("/import", get(import_page).post(import_form))
         .route("/budgets", get(budgets_page))
@@ -109,6 +111,67 @@ async fn create_account_form(
             .into_response();
     }
     Redirect::to("/accounts").into_response()
+}
+
+#[derive(Deserialize)]
+pub struct DeleteAccountForm {
+    pub id: String,
+}
+
+async fn delete_account_form(
+    State(state): State<AppState>,
+    Form(form): Form<DeleteAccountForm>,
+) -> Response {
+    if let Err(e) = delete_account(&state.db, &form.id) {
+        error_event("delete account failed");
+        return (
+            StatusCode::BAD_REQUEST,
+            Html(ui::error_page(&e)),
+        )
+            .into_response();
+    }
+    Redirect::to("/accounts").into_response()
+}
+
+fn delete_account(db: &Db, id: &str) -> Result<(), String> {
+    let id = id.trim();
+    if id.is_empty() {
+        return Err("Account id is required".into());
+    }
+    let conn = db.lock()?;
+    let n = conn
+        .execute(sql::DELETE_ACCOUNT, rusqlite::params![id])
+        .map_err(|e| e.to_string())?;
+    if n == 0 {
+        return Err("That account was not found.".into());
+    }
+    Ok(())
+}
+
+#[derive(Deserialize)]
+pub struct SeedForm {
+    pub fresh: Option<String>,
+}
+
+async fn seed_accounts_form(
+    State(state): State<AppState>,
+    Form(form): Form<SeedForm>,
+) -> Response {
+    let fresh = matches!(
+        form.fresh.as_deref().map(str::trim),
+        Some("1") | Some("true") | Some("on") | Some("yes")
+    );
+    match seed::seed_database(&state.db, fresh) {
+        Ok(_) => Redirect::to("/accounts").into_response(),
+        Err(_) => {
+            error_event("seed failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(ui::error_page("Could not load demo household.")),
+            )
+                .into_response()
+        }
+    }
 }
 
 fn insert_manual_account(db: &Db, form: &AccountForm) -> Result<(), String> {

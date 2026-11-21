@@ -154,6 +154,23 @@ input, select {
   border: 1px solid var(--line);
   margin-left: 0.5rem;
 }
+.inline-form {
+  display: inline;
+  margin: 0;
+}
+.inline-form .btn-quiet {
+  margin-left: 0;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.85rem;
+}
+.check {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  margin: 0.75rem 0 1rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
 .bank-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 .bank-actions .btn-quiet { margin-left: 0; }
 .bank-link code {
