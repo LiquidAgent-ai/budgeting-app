@@ -1,6 +1,7 @@
-use crate::config::logging::error_event;
+use crate::config::logging::{error_event, info_event};
 use crate::config::Config;
 use crate::db::finance;
+use crate::db::rules;
 use crate::db::seed;
 use crate::db::sql;
 use crate::db::Db;
@@ -29,7 +30,14 @@ pub fn router(state: AppState) -> Router {
         .route("/", get(home))
         .route("/dashboard", get(dashboard_page))
         .route("/accounts", get(accounts_page).post(create_account_form))
+        .route("/accounts/rename", post(rename_account_form))
         .route("/transactions", get(transactions_page))
+        .route("/transactions/edit", post(edit_transaction_form))
+        .route("/rules", get(rules_page))
+        .route("/rules/create", post(create_rule_form))
+        .route("/rules/delete", post(delete_rule_form))
+        .route("/rules/toggle", post(toggle_rule_form))
+        .route("/rules/apply", post(apply_rules_form))
         .route("/import", get(import_page).post(import_form))
         .route("/budgets", get(budgets_page))
         .route("/net-worth", get(net_worth_page))
@@ -111,6 +119,204 @@ async fn create_account_form(
     Redirect::to("/accounts").into_response()
 }
 
+#[derive(Deserialize)]
+pub struct RenameAccountForm {
+    pub id: String,
+    pub name: String,
+}
+
+async fn rename_account_form(
+    State(state): State<AppState>,
+    Form(form): Form<RenameAccountForm>,
+) -> Response {
+    if let Err(e) = rules::rename_account(&state.db, &form.id, &form.name) {
+        error_event("rename account failed");
+        return (
+            StatusCode::BAD_REQUEST,
+            Html(ui::error_page(&e)),
+        )
+            .into_response();
+    }
+    Redirect::to("/accounts").into_response()
+}
+
+#[derive(Deserialize)]
+pub struct EditTransactionForm {
+    pub id: String,
+    pub name: String,
+    pub category: String,
+    pub tags: Option<String>,
+    pub is_subscription: Option<String>,
+}
+
+async fn edit_transaction_form(
+    State(state): State<AppState>,
+    Form(form): Form<EditTransactionForm>,
+) -> Response {
+    let is_sub = matches!(
+        form.is_subscription.as_deref().map(str::trim),
+        Some("1") | Some("true") | Some("on") | Some("yes")
+    );
+    if let Err(e) = rules::update_transaction(
+        &state.db,
+        &form.id,
+        &form.name,
+        &form.category,
+        form.tags.as_deref().unwrap_or(""),
+        is_sub,
+    ) {
+        error_event("edit transaction failed");
+        return (
+            StatusCode::BAD_REQUEST,
+            Html(ui::error_page(&e)),
+        )
+            .into_response();
+    }
+    Redirect::to("/transactions").into_response()
+}
+
+async fn transactions_page(State(state): State<AppState>) -> Response {
+    match (
+        finance::list_transactions(&state.db, 200),
+        rules::list_tags(&state.db),
+    ) {
+        (Ok(t), Ok(tags)) => Html(ui::transactions_page(&t, &tags)).into_response(),
+        _ => {
+            error_event("transactions page failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(ui::error_page("Could not load transactions.")),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn rules_page(State(state): State<AppState>) -> Response {
+    match (rules::list_rules(&state.db), rules::list_tags(&state.db)) {
+        (Ok(rules_list), Ok(tags)) => {
+            Html(ui::rules_page(&rules_list, &tags, None)).into_response()
+        }
+        _ => {
+            error_event("rules page failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(ui::error_page("Could not load category rules.")),
+            )
+                .into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct CreateRuleForm {
+    pub pattern: String,
+    pub match_field: Option<String>,
+    pub category: String,
+    pub tags: Option<String>,
+    pub is_subscription: Option<String>,
+    pub priority: Option<i64>,
+}
+
+async fn create_rule_form(
+    State(state): State<AppState>,
+    Form(form): Form<CreateRuleForm>,
+) -> Response {
+    let is_sub = matches!(
+        form.is_subscription.as_deref().map(str::trim),
+        Some("1") | Some("true") | Some("on") | Some("yes")
+    );
+    if let Err(e) = rules::create_rule(
+        &state.db,
+        &form.pattern,
+        form.match_field.as_deref().unwrap_or("either"),
+        &form.category,
+        form.tags.as_deref().unwrap_or(""),
+        is_sub,
+        form.priority.unwrap_or(100),
+    ) {
+        error_event("create category rule failed");
+        return (
+            StatusCode::BAD_REQUEST,
+            Html(ui::error_page(&e)),
+        )
+            .into_response();
+    }
+    info_event("category rule created");
+    Redirect::to("/rules").into_response()
+}
+
+#[derive(Deserialize)]
+pub struct RuleIdForm {
+    pub id: String,
+}
+
+async fn delete_rule_form(
+    State(state): State<AppState>,
+    Form(form): Form<RuleIdForm>,
+) -> Response {
+    if let Err(e) = rules::delete_rule(&state.db, &form.id) {
+        error_event("delete category rule failed");
+        return (
+            StatusCode::BAD_REQUEST,
+            Html(ui::error_page(&e)),
+        )
+            .into_response();
+    }
+    info_event("category rule deleted");
+    Redirect::to("/rules").into_response()
+}
+
+#[derive(Deserialize)]
+pub struct ToggleRuleForm {
+    pub id: String,
+    pub enabled: Option<String>,
+}
+
+async fn toggle_rule_form(
+    State(state): State<AppState>,
+    Form(form): Form<ToggleRuleForm>,
+) -> Response {
+    let enabled = matches!(
+        form.enabled.as_deref().map(str::trim),
+        Some("1") | Some("true") | Some("on") | Some("yes")
+    );
+    if let Err(e) = rules::set_rule_enabled(&state.db, &form.id, enabled) {
+        error_event("toggle category rule failed");
+        return (
+            StatusCode::BAD_REQUEST,
+            Html(ui::error_page(&e)),
+        )
+            .into_response();
+    }
+    Redirect::to("/rules").into_response()
+}
+
+async fn apply_rules_form(State(state): State<AppState>) -> Response {
+    match rules::apply_rules_to_existing(&state.db) {
+        Ok(n) => {
+            info_event(&format!("category rules applied count={n}"));
+            match (rules::list_rules(&state.db), rules::list_tags(&state.db)) {
+                (Ok(rules_list), Ok(tags)) => Html(ui::rules_page(
+                    &rules_list,
+                    &tags,
+                    Some(format!("Updated {n} existing transaction(s).")),
+                ))
+                .into_response(),
+                _ => Redirect::to("/rules").into_response(),
+            }
+        }
+        Err(_) => {
+            error_event("apply category rules failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(ui::error_page("Could not apply category rules.")),
+            )
+                .into_response()
+        }
+    }
+}
+
 fn insert_manual_account(db: &Db, form: &AccountForm) -> Result<(), String> {
     let name = form.name.trim();
     if name.is_empty() {
@@ -137,20 +343,6 @@ fn insert_manual_account(db: &Db, form: &AccountForm) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
     Ok(())
-}
-
-async fn transactions_page(State(state): State<AppState>) -> Response {
-    match finance::list_transactions(&state.db, 200) {
-        Ok(t) => Html(ui::transactions_page(&t)).into_response(),
-        Err(_) => {
-            error_event("transactions page failed");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Html(ui::error_page("Could not load transactions.")),
-            )
-                .into_response()
-        }
-    }
 }
 
 async fn import_page(State(state): State<AppState>) -> Response {

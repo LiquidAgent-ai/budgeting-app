@@ -38,6 +38,28 @@ pub struct Transaction {
     pub created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Tag {
+    pub id: String,
+    pub name: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CategoryRule {
+    pub id: String,
+    pub pattern: String,
+    pub match_field: String,
+    pub category: String,
+    pub tags: Option<String>,
+    pub is_subscription: i64,
+    pub priority: i64,
+    pub enabled: i64,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

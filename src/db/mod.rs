@@ -2,6 +2,7 @@ pub mod categories;
 pub mod duplicates;
 pub mod finance;
 pub mod models;
+pub mod rules;
 pub mod seed;
 pub mod sql;
 
