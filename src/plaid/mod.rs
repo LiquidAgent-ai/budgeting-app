@@ -3,6 +3,7 @@
 use crate::config::logging::{error_event, info_event};
 use crate::config::Config;
 use crate::db::categories::categorize;
+use crate::db::duplicates::{self, DuplicateDecision, IncomingTxn};
 use crate::db::sql;
 use crate::db::Db;
 use rusqlite::params;
@@ -370,45 +371,55 @@ fn upsert_transaction(
     let pending = txn.get("pending").and_then(|v| v.as_bool()).unwrap_or(false);
     let (category, is_sub) = categorize(name, merchant);
 
-    let existing: Option<String> = conn
-        .query_row(
-            sql::SELECT_TRANSACTION_ID_BY_PLAID_ID,
-            params![plaid_txn_id],
-            |r| r.get(0),
-        )
-        .ok();
-    if let Some(id) = existing {
-        conn.execute(
-            sql::UPDATE_TRANSACTION,
-            params![
-                amount,
-                date,
-                name,
-                merchant,
-                category,
-                if pending { 1 } else { 0 },
-                if is_sub { 1 } else { 0 },
-                id,
-            ],
-        )
-        .map_err(|e| e.to_string())?;
-    } else {
-        conn.execute(
-            sql::INSERT_PLAID_TRANSACTION,
-            params![
-                Uuid::new_v4().to_string(),
-                account_id,
-                plaid_txn_id,
-                amount,
-                date,
-                name,
-                merchant,
-                category,
-                if pending { 1 } else { 0 },
-                if is_sub { 1 } else { 0 },
-            ],
-        )
-        .map_err(|e| e.to_string())?;
+    let incoming = IncomingTxn {
+        account_id: &account_id,
+        date,
+        amount,
+        name,
+        merchant_name: merchant,
+        plaid_transaction_id: Some(plaid_txn_id),
+        teller_transaction_id: None,
+        import_fingerprint: None,
+    };
+    match duplicates::classify(conn, &incoming)? {
+        DuplicateDecision::SameProvider { id } => {
+            conn.execute(
+                sql::UPDATE_TRANSACTION,
+                params![
+                    amount,
+                    date,
+                    name,
+                    merchant,
+                    category,
+                    if pending { 1 } else { 0 },
+                    if is_sub { 1 } else { 0 },
+                    id,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        DuplicateDecision::ContentMatch { id } => {
+            // Already on the books (import/Teller/etc.) — do not insert another row.
+            let _ = duplicates::link_plaid_id(conn, &id, plaid_txn_id);
+        }
+        DuplicateDecision::New => {
+            conn.execute(
+                sql::INSERT_PLAID_TRANSACTION,
+                params![
+                    Uuid::new_v4().to_string(),
+                    account_id,
+                    plaid_txn_id,
+                    amount,
+                    date,
+                    name,
+                    merchant,
+                    category,
+                    if pending { 1 } else { 0 },
+                    if is_sub { 1 } else { 0 },
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        }
     }
     Ok(())
 }

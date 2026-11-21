@@ -1,4 +1,5 @@
 pub mod categories;
+pub mod duplicates;
 pub mod finance;
 pub mod models;
 pub mod seed;

@@ -85,7 +85,7 @@ A check of the server is `GET /api/health`.
 
 ## Import statements (no bank API)
 
-Open **Import** in the app, pick a manual or linked account, and upload a CSV, TSV, OFX, QFX, or QIF export from your bank or card. Re-importing the same rows skips duplicates. This path never talks to Teller or Plaid.
+Open **Import** in the app, pick a manual or linked account, and upload a CSV, TSV, OFX, QFX, or QIF export from your bank or card. Duplicate recognition skips matching rows inside a file, on re-import, and when the same spend later arrives from Plaid or Teller (same account, date ±1 day, amount, and payee). This path never talks to Teller or Plaid.
 
 You can also post a multipart form to `POST /api/import` with fields `account_id` and `file`.
 

@@ -81,3 +81,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_teller_id
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
 CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category);
+CREATE INDEX IF NOT EXISTS idx_transactions_account_date_amount
+  ON transactions(account_id, date, amount);
