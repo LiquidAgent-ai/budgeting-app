@@ -1,6 +1,6 @@
 # Anchored
 
-Anchored is a personal finance app that stays on your computer. The server is written in Rust. Your books live in an encrypted SQLite file. You can import bank and card exports (CSV, TSV, OFX, QFX, QIF) without linking an institution. Bank linking, when configured, is read-only through Teller (free developer tier) or Plaid.
+Anchored is a personal finance app that stays on your computer. The server is written in Rust. Your books live in an encrypted SQLite file. You can import bank and card exports (CSV, TSV, OFX, QFX, QIF) without linking an institution. Bank linking, when configured, is read-only through Teller (free developer tier) or Plaid. On Accounts you can rename accounts; on Transactions you can rename payees, set categories and tags; on Rules you can auto-categorize matching sources.
 
 You can run it locally, or in one container with Podman or Docker (including on TrueNAS). The published image is `ghcr.io/liquidagent-ai/budgeting-app`.
 

@@ -154,22 +154,56 @@ input, select {
   border: 1px solid var(--line);
   margin-left: 0.5rem;
 }
-.inline-form {
-  display: inline;
+.inline-form,
+.inline-edit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
   margin: 0;
 }
-.inline-form .btn-quiet {
+.inline-edit input {
+  min-width: 10rem;
+  flex: 1;
+}
+.inline-form .btn-quiet,
+.inline-edit .btn-quiet {
   margin-left: 0;
-  padding: 0.35rem 0.7rem;
+  padding: 0.4rem 0.7rem;
   font-size: 0.85rem;
 }
 .check {
   display: flex;
   gap: 0.5rem;
-  align-items: flex-start;
+  align-items: center;
   margin: 0.75rem 0 1rem;
   color: var(--muted);
-  font-size: 0.95rem;
+  font-size: 0.9rem;
+}
+.txn-edit { margin: 0; }
+.txn-grid { margin-bottom: 0.5rem; }
+.txn-edit-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+.rule-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.tag-chip {
+  display: inline-block;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--line);
+  background: rgba(232, 242, 236, 0.06);
+  font-size: 0.85rem;
 }
 .bank-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 .bank-actions .btn-quiet { margin-left: 0; }

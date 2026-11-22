@@ -59,6 +59,23 @@ pub const LINK_PLAID_TRANSACTION_ID: &str = include_str!("link_plaid_transaction
 pub const LINK_TELLER_TRANSACTION_ID: &str = include_str!("link_teller_transaction_id.sql");
 
 pub const INSERT_MANUAL_ACCOUNT: &str = include_str!("insert_manual_account.sql");
+pub const UPDATE_ACCOUNT_NAME: &str = include_str!("update_account_name.sql");
+pub const UPDATE_TRANSACTION_LABEL: &str = include_str!("update_transaction_label.sql");
+pub const UPDATE_TRANSACTION_CATEGORY: &str = include_str!("update_transaction_category.sql");
+
+pub const INSERT_TAG: &str = include_str!("insert_tag.sql");
+pub const SELECT_TAG_BY_NAME: &str = include_str!("select_tag_by_name.sql");
+pub const SELECT_TAGS: &str = include_str!("select_tags.sql");
+pub const DELETE_TRANSACTION_TAGS: &str = include_str!("delete_transaction_tags.sql");
+pub const INSERT_TRANSACTION_TAG: &str = include_str!("insert_transaction_tag.sql");
+
+pub const INSERT_CATEGORY_RULE: &str = include_str!("insert_category_rule.sql");
+pub const SELECT_CATEGORY_RULES: &str = include_str!("select_category_rules.sql");
+pub const SELECT_ENABLED_CATEGORY_RULES: &str = include_str!("select_enabled_category_rules.sql");
+pub const DELETE_CATEGORY_RULE: &str = include_str!("delete_category_rule.sql");
+pub const UPDATE_CATEGORY_RULE_ENABLED: &str = include_str!("update_category_rule_enabled.sql");
+pub const SELECT_ALL_TRANSACTION_IDS_NAMES: &str =
+    include_str!("select_all_transaction_ids_names.sql");
 
 pub const COUNT_ACCOUNTS: &str = include_str!("count_accounts.sql");
 pub const INSERT_SEED_ACCOUNT: &str = include_str!("insert_seed_account.sql");

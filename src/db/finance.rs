@@ -1,3 +1,4 @@
+use crate::db::rules;
 use crate::db::sql;
 use crate::db::Db;
 use crate::db::models::{Account, CategorySpend, DashboardSummary, NetWorthBreakdown, Transaction};
@@ -113,28 +114,12 @@ pub fn dashboard(db: &Db) -> Result<DashboardSummary, String> {
             sql::SELECT_RECENT_TRANSACTIONS,
         )
         .map_err(|e| e.to_string())?;
-    let recent_transactions = stmt
-        .query_map([], |r| {
-            Ok(Transaction {
-                id: r.get(0)?,
-                account_id: r.get(1)?,
-                plaid_transaction_id: r.get(2)?,
-                amount: r.get(3)?,
-                date: r.get(4)?,
-                name: r.get(5)?,
-                merchant_name: r.get(6)?,
-                category: r.get(7)?,
-                subcategory: r.get(8)?,
-                pending: r.get(9)?,
-                is_subscription: r.get(10)?,
-                notes: r.get(11)?,
-                created_at: r.get(12)?,
-                account_name: r.get(13)?,
-            })
-        })
+    let mut recent_transactions = stmt
+        .query_map([], map_transaction_row)
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
+    attach_tags(&conn, &mut recent_transactions)?;
 
     let mut stmt = conn
         .prepare(
@@ -169,6 +154,37 @@ pub fn dashboard(db: &Db) -> Result<DashboardSummary, String> {
     })
 }
 
+fn map_transaction_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Transaction> {
+    Ok(Transaction {
+        id: r.get(0)?,
+        account_id: r.get(1)?,
+        plaid_transaction_id: r.get(2)?,
+        amount: r.get(3)?,
+        date: r.get(4)?,
+        name: r.get(5)?,
+        merchant_name: r.get(6)?,
+        category: r.get(7)?,
+        subcategory: r.get(8)?,
+        pending: r.get(9)?,
+        is_subscription: r.get(10)?,
+        notes: r.get(11)?,
+        created_at: r.get(12)?,
+        account_name: r.get(13)?,
+        tags: Vec::new(),
+    })
+}
+
+fn attach_tags(conn: &rusqlite::Connection, txns: &mut [Transaction]) -> Result<(), String> {
+    let ids: Vec<String> = txns.iter().map(|t| t.id.clone()).collect();
+    let map = rules::tags_for_transactions(conn, &ids)?;
+    for t in txns.iter_mut() {
+        if let Some(tags) = map.get(&t.id) {
+            t.tags = tags.clone();
+        }
+    }
+    Ok(())
+}
+
 pub fn net_worth(db: &Db) -> Result<NetWorthBreakdown, String> {
     let accounts = list_accounts(db)?;
     let (net_worth, cash, credit_used, investments, loans) = compute_net_worth(&accounts);
@@ -189,28 +205,12 @@ pub fn list_transactions(db: &Db, limit: i64) -> Result<Vec<Transaction>, String
             sql::SELECT_TRANSACTIONS,
         )
         .map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map(params![limit], |r| {
-            Ok(Transaction {
-                id: r.get(0)?,
-                account_id: r.get(1)?,
-                plaid_transaction_id: r.get(2)?,
-                amount: r.get(3)?,
-                date: r.get(4)?,
-                name: r.get(5)?,
-                merchant_name: r.get(6)?,
-                category: r.get(7)?,
-                subcategory: r.get(8)?,
-                pending: r.get(9)?,
-                is_subscription: r.get(10)?,
-                notes: r.get(11)?,
-                created_at: r.get(12)?,
-                account_name: r.get(13)?,
-            })
-        })
+    let mut rows = stmt
+        .query_map(params![limit], map_transaction_row)
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
+    attach_tags(&conn, &mut rows)?;
     Ok(rows)
 }
 
@@ -242,27 +242,11 @@ pub fn list_subscriptions(db: &Db) -> Result<Vec<Transaction>, String> {
             sql::SELECT_SUBSCRIPTIONS,
         )
         .map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map(params![start], |r| {
-            Ok(Transaction {
-                id: r.get(0)?,
-                account_id: r.get(1)?,
-                plaid_transaction_id: r.get(2)?,
-                amount: r.get(3)?,
-                date: r.get(4)?,
-                name: r.get(5)?,
-                merchant_name: r.get(6)?,
-                category: r.get(7)?,
-                subcategory: r.get(8)?,
-                pending: r.get(9)?,
-                is_subscription: r.get(10)?,
-                notes: r.get(11)?,
-                created_at: r.get(12)?,
-                account_name: r.get(13)?,
-            })
-        })
+    let mut rows = stmt
+        .query_map(params![start], map_transaction_row)
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
+    attach_tags(&conn, &mut rows)?;
     Ok(rows)
 }

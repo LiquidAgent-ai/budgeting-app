@@ -2,8 +2,8 @@
 
 use crate::config::logging::{error_event, info_event};
 use crate::config::Config;
-use crate::db::categories::categorize;
 use crate::db::duplicates::{self, DuplicateDecision, IncomingTxn};
+use crate::db::rules;
 use crate::db::sql;
 use crate::db::Db;
 use chrono::{Duration, Local, NaiveDate};
@@ -467,7 +467,7 @@ fn upsert_transaction(
         .and_then(|v| v.as_str())
         .map(|s| s == "pending")
         .unwrap_or(false);
-    let (category, is_sub) = categorize(name, merchant);
+    let hit = rules::categorize(conn, name, merchant);
 
     let incoming = IncomingTxn {
         account_id,
@@ -488,35 +488,42 @@ fn upsert_transaction(
                     date,
                     name,
                     merchant,
-                    category,
+                    hit.category,
                     if pending { 1 } else { 0 },
-                    if is_sub { 1 } else { 0 },
+                    if hit.is_subscription { 1 } else { 0 },
                     id,
                 ],
             )
             .map_err(|e| e.to_string())?;
+            if !hit.tags.is_empty() {
+                rules::set_transaction_tags(conn, &id, &hit.tags)?;
+            }
         }
         DuplicateDecision::ContentMatch { id } => {
             // Already on the books (import/Plaid/etc.) — do not insert another row.
             let _ = duplicates::link_teller_id(conn, &id, teller_txn_id);
         }
         DuplicateDecision::New => {
+            let txn_id = Uuid::new_v4().to_string();
             conn.execute(
                 sql::INSERT_TELLER_TRANSACTION,
                 params![
-                    Uuid::new_v4().to_string(),
+                    txn_id,
                     account_id,
                     teller_txn_id,
                     amount,
                     date,
                     name,
                     merchant,
-                    category,
+                    hit.category,
                     if pending { 1 } else { 0 },
-                    if is_sub { 1 } else { 0 },
+                    if hit.is_subscription { 1 } else { 0 },
                 ],
             )
             .map_err(|e| e.to_string())?;
+            if !hit.tags.is_empty() {
+                rules::set_transaction_tags(conn, &txn_id, &hit.tags)?;
+            }
         }
     }
     Ok(())

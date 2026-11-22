@@ -1,5 +1,8 @@
 use crate::db::finance;
-use crate::db::models::{Account, Budget, DashboardSummary, NetWorthBreakdown, Transaction};
+use crate::db::models::{
+    Account, Budget, CategoryRule, DashboardSummary, NetWorthBreakdown, Tag, Transaction,
+};
+use crate::db::rules;
 use crate::db::sql;
 use crate::teller::TellerStatus;
 use std::fmt::Write as _;
@@ -38,6 +41,7 @@ fn layout(title: &str, active: &str, body: &str) -> String {
     {accounts}
     {transactions}
     {import}
+    {rules}
     {budgets}
     {networth}
     {subscriptions}
@@ -53,11 +57,35 @@ fn layout(title: &str, active: &str, body: &str) -> String {
         accounts = nav("accounts", "/accounts", "Accounts"),
         transactions = nav("transactions", "/transactions", "Transactions"),
         import = nav("import", "/import", "Import"),
+        rules = nav("rules", "/rules", "Rules"),
         budgets = nav("budgets", "/budgets", "Budgets"),
         networth = nav("net-worth", "/net-worth", "Net worth"),
         subscriptions = nav("subscriptions", "/subscriptions", "Subscriptions"),
         body = body,
     )
+}
+
+fn category_options(selected: &str) -> String {
+    let mut out = String::new();
+    let mut matched = false;
+    for c in rules::list_categories() {
+        let sel = if c.eq_ignore_ascii_case(selected) {
+            matched = true;
+            " selected"
+        } else {
+            ""
+        };
+        let _ = write!(out, r#"<option value="{}"{sel}>{}</option>"#, esc(c), esc(c));
+    }
+    if !selected.is_empty() && !matched {
+        let _ = write!(
+            out,
+            r#"<option value="{}" selected>{}</option>"#,
+            esc(selected),
+            esc(selected)
+        );
+    }
+    out
 }
 
 pub fn landing(bank_ready: bool) -> String {
@@ -160,24 +188,30 @@ pub fn accounts_page(
         let _ = write!(
             rows,
             r#"<tr>
-  <td>{}</td>
-  <td>{}</td>
-  <td>{}</td>
-  <td>{}</td>
-  <td class="num">{}</td>
+  <td>
+    <form class="inline-edit" method="post" action="/accounts/rename">
+      <input type="hidden" name="id" value="{id}"/>
+      <input name="name" value="{name}" required aria-label="Account name"/>
+      <button type="submit" class="btn btn-quiet">Rename</button>
+    </form>
+  </td>
+  <td>{ty}</td>
+  <td>{inst}</td>
+  <td>{mask}</td>
+  <td class="num">{bal}</td>
   <td>
     <form method="post" action="/accounts/delete" class="inline-form" onsubmit="return confirm('Remove this account and its transactions?');">
-      <input type="hidden" name="id" value="{}"/>
+      <input type="hidden" name="id" value="{id}"/>
       <button type="submit" class="btn btn-quiet">Remove</button>
     </form>
   </td>
 </tr>"#,
-            esc(&a.name),
-            esc(&a.account_type),
-            esc(a.institution_name.as_deref().unwrap_or("—")),
-            esc(a.mask.as_deref().unwrap_or("")),
-            money(a.balance_current),
-            esc(&a.id),
+            id = esc(&a.id),
+            name = esc(&a.name),
+            ty = esc(&a.account_type),
+            inst = esc(a.institution_name.as_deref().unwrap_or("—")),
+            mask = esc(a.mask.as_deref().unwrap_or("")),
+            bal = money(a.balance_current)
         );
     }
 
@@ -316,29 +350,149 @@ pub fn accounts_page(
     layout("Accounts", "accounts", &body)
 }
 
-pub fn transactions_page(txns: &[Transaction]) -> String {
+pub fn transactions_page(txns: &[Transaction], _known_tags: &[Tag]) -> String {
     let mut rows = String::new();
     for t in txns {
+        let tags_value = t.tags.join(", ");
+        let sub_checked = if t.is_subscription != 0 {
+            " checked"
+        } else {
+            ""
+        };
         let _ = write!(
             rows,
-            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td class=\"num\">{}</td></tr>",
-            esc(&t.date),
-            esc(t.account_name.as_deref().unwrap_or("")),
-            esc(&t.name),
-            esc(&t.category),
-            money(t.amount)
+            r#"<tr class="txn-row">
+  <td>{date}</td>
+  <td>{account}</td>
+  <td colspan="4">
+    <form class="txn-edit" method="post" action="/transactions/edit">
+      <input type="hidden" name="id" value="{id}"/>
+      <div class="grid txn-grid">
+        <label>Name <input name="name" value="{name}" required/></label>
+        <label>Category <select name="category">{cats}</select></label>
+        <label>Tags <input name="tags" value="{tags}" placeholder="comma-separated"/></label>
+        <label class="check"><input type="checkbox" name="is_subscription" value="1"{sub}/> Subscription</label>
+      </div>
+      <div class="txn-edit-actions">
+        <span class="num muted">{amount}</span>
+        <button type="submit" class="btn btn-quiet">Save</button>
+      </div>
+    </form>
+  </td>
+</tr>"#,
+            date = esc(&t.date),
+            account = esc(t.account_name.as_deref().unwrap_or("")),
+            id = esc(&t.id),
+            name = esc(&t.name),
+            cats = category_options(&t.category),
+            tags = esc(&tags_value),
+            sub = sub_checked,
+            amount = money(t.amount),
         );
     }
     let body = format!(
         r#"<h1>Transactions</h1>
-<p class="muted">Load a bank or card export on <a href="/import">Import</a> when you are not using Teller or Plaid.</p>
+<p class="muted">Rename payees, set categories and tags, or add auto-rules on <a href="/rules">Rules</a>. Import statements on <a href="/import">Import</a>.</p>
 <table>
-  <thead><tr><th>Date</th><th>Account</th><th>Name</th><th>Category</th><th class="num">Amount</th></tr></thead>
+  <thead><tr><th>Date</th><th>Account</th><th colspan="4">Details</th></tr></thead>
   <tbody>{rows}</tbody>
 </table>"#,
         rows = rows
     );
     layout("Transactions", "transactions", &body)
+}
+
+pub fn rules_page(rules_list: &[CategoryRule], tags: &[Tag], notice: Option<String>) -> String {
+    let notice_html = match notice {
+        Some(msg) => format!(r#"<p class="notice">{}</p>"#, esc(&msg)),
+        None => String::new(),
+    };
+    let mut rows = String::new();
+    for r in rules_list {
+        let enabled = r.enabled != 0;
+        let toggle_value = if enabled { "0" } else { "1" };
+        let toggle_label = if enabled { "Disable" } else { "Enable" };
+        let _ = write!(
+            rows,
+            r#"<tr>
+  <td><code>{pattern}</code></td>
+  <td>{field}</td>
+  <td>{category}</td>
+  <td>{tags}</td>
+  <td>{priority}</td>
+  <td>{status}</td>
+  <td class="rule-actions">
+    <form method="post" action="/rules/toggle" class="inline-form">
+      <input type="hidden" name="id" value="{id}"/>
+      <input type="hidden" name="enabled" value="{toggle_value}"/>
+      <button type="submit" class="btn btn-quiet">{toggle_label}</button>
+    </form>
+    <form method="post" action="/rules/delete" class="inline-form" onsubmit="return confirm('Delete this rule?');">
+      <input type="hidden" name="id" value="{id}"/>
+      <button type="submit" class="btn btn-quiet">Delete</button>
+    </form>
+  </td>
+</tr>"#,
+            pattern = esc(&r.pattern),
+            field = esc(&r.match_field),
+            category = esc(&r.category),
+            tags = esc(r.tags.as_deref().unwrap_or("—")),
+            priority = r.priority,
+            status = if enabled { "On" } else { "Off" },
+            id = esc(&r.id),
+            toggle_value = toggle_value,
+            toggle_label = toggle_label,
+        );
+    }
+    let mut tag_chips = String::new();
+    for t in tags {
+        let _ = write!(tag_chips, r#"<span class="tag-chip">{}</span>"#, esc(&t.name));
+    }
+    if tag_chips.is_empty() {
+        tag_chips = r#"<span class="muted">No tags yet.</span>"#.into();
+    }
+    let cats = category_options("Other");
+    let body = format!(
+        r#"<h1>Category rules</h1>
+<p class="muted">Match a payee or merchant substring and set the category (and optional tags) automatically on import and bank sync. Lower priority runs first.</p>
+{notice}
+<form class="panel" method="post" action="/rules/create">
+  <h2>Add rule</h2>
+  <div class="grid">
+    <label>Contains <input name="pattern" required placeholder="e.g. COSTCO GAS"/></label>
+    <label>Match
+      <select name="match_field">
+        <option value="either">Name or merchant</option>
+        <option value="name">Name only</option>
+        <option value="merchant">Merchant only</option>
+      </select>
+    </label>
+    <label>Category <select name="category">{cats}</select></label>
+    <label>Tags <input name="tags" placeholder="comma-separated"/></label>
+    <label>Priority <input name="priority" type="number" value="100" min="1" max="10000"/></label>
+    <label class="check"><input type="checkbox" name="is_subscription" value="1"/> Mark as subscription</label>
+  </div>
+  <button type="submit" class="btn">Save rule</button>
+</form>
+<form class="panel" method="post" action="/rules/apply" onsubmit="return confirm('Apply enabled rules to existing transactions? Matching rows will be updated.');">
+  <h2>Apply to existing</h2>
+  <p class="muted">Re-run enabled rules against transactions already on this computer. Only matches change.</p>
+  <button type="submit" class="btn btn-quiet">Apply rules now</button>
+</form>
+<section class="panel">
+  <h2>Tags in use</h2>
+  <div class="tag-list">{tag_chips}</div>
+</section>
+<table>
+  <thead><tr><th>Pattern</th><th>Match</th><th>Category</th><th>Tags</th><th>Priority</th><th>Status</th><th></th></tr></thead>
+  <tbody>{rows}</tbody>
+</table>"#,
+        notice = notice_html,
+        cats = cats,
+        tag_chips = tag_chips,
+        rows = rows,
+    );
+    layout("Rules", "rules", &body)
 }
 
 pub fn import_page(accounts: &[Account], notice: Option<String>) -> String {
