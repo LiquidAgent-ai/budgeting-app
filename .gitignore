@@ -2,8 +2,23 @@
 /dist-desktop
 /data/*.db
 /data/*.db-*
+# Local secrets and env files (keep .env.example tracked)
 .env
-.env.local
+.env.*
+!.env.example
+*.env
+!*.env.example
+teller.env
+plaid.env
+# Certificates and key material (Teller client certs, sealed desktop key)
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+db-key.bin
+**/db-key.bin
+# Local database artifacts
 *.db
 *.db-wal
 *.db-shm
