@@ -178,3 +178,54 @@ pub fn seed_database(db: &Db, fresh: bool) -> Result<(bool, String), String> {
     tx.commit().map_err(|e| e.to_string())?;
     Ok((true, "Demo household loaded".into()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::sql;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_db() -> (Db, std::path::PathBuf) {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("anchored-seed-test-{nanos}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("anchored.db");
+        let db = Db::open(path.clone(), "seed-test-key-32chars-minimum!!".into()).unwrap();
+        (db, dir)
+    }
+
+    #[test]
+    fn fresh_database_has_no_demo_accounts_until_seeded() {
+        let (db, dir) = temp_db();
+        let count: i64 = {
+            let conn = db.lock().unwrap();
+            conn.query_row(sql::COUNT_ACCOUNTS, [], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(count, 0, "opening a new DB must not invent accounts");
+
+        let (seeded, message) = seed_database(&db, false).unwrap();
+        assert!(seeded);
+        assert!(message.contains("Demo"));
+
+        let conn = db.lock().unwrap();
+        let names: Vec<String> = {
+            let mut stmt = conn
+                .prepare("SELECT name FROM accounts ORDER BY name")
+                .unwrap();
+            stmt.query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert!(names.iter().any(|n| n == "Everyday Checking"));
+        assert!(names.iter().any(|n| n == "Roth IRA"));
+        drop(conn);
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

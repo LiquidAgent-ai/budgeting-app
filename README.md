@@ -23,12 +23,14 @@ cp .env.example .env.local
 cargo run --release
 ```
 
-Open http://127.0.0.1:3000. Local runs listen on 127.0.0.1 only. The first start creates `data/anchored.db` and loads a demo household.
+Open http://127.0.0.1:3000. Local runs listen on 127.0.0.1 only. The first start creates an empty encrypted `data/anchored.db`. Demo accounts (Everyday Checking, Vanguard Roth IRA, and so on) are not loaded unless you ask for them on the Accounts page or call the seed API.
 
 ```bash
-# Re-seed demo data (wipes the database file)
+# Optional: load demo data (wipes the database file when fresh is true)
 curl -X POST http://127.0.0.1:3000/api/seed -H 'content-type: application/json' -d '{"fresh":true}'
 ```
+
+If an older build already filled your books with demo accounts, remove them on Accounts, or quit Anchored and delete the database file (`data/anchored.db` locally, or `%APPDATA%\Anchored\anchored.db` on Windows). Keep `db-key.bin` on Windows so the same sealed key can open a new empty file.
 
 ## The database key
 

@@ -92,7 +92,7 @@ pub fn landing(bank_ready: bool) -> String {
     let bank = if bank_ready {
         "<p class=\"muted\">Bank linking is configured (read-only via Teller or Plaid).</p>"
     } else {
-        "<p class=\"muted\">Add a free Teller application id (or Plaid sandbox keys) to link banks. Demo data and CSV/OFX import work without them.</p>"
+        "<p class=\"muted\">Add a free Teller application id (or Plaid sandbox keys) to link banks. CSV/OFX import works without them. Demo data is optional from Accounts.</p>"
     };
     format!(
         r#"<!DOCTYPE html>
@@ -199,6 +199,12 @@ pub fn accounts_page(
   <td>{inst}</td>
   <td>{mask}</td>
   <td class="num">{bal}</td>
+  <td>
+    <form method="post" action="/accounts/delete" class="inline-form" onsubmit="return confirm('Remove this account and its transactions?');">
+      <input type="hidden" name="id" value="{id}"/>
+      <button type="submit" class="btn btn-quiet">Remove</button>
+    </form>
+  </td>
 </tr>"#,
             id = esc(&a.id),
             name = esc(&a.name),
@@ -307,7 +313,7 @@ pub fn accounts_page(
 
     let body = format!(
         r#"<h1>Accounts</h1>
-<p class="muted">Balances on this computer. Linked banks stay read-only.</p>
+<p class="muted">Balances on this computer. Linked banks stay read-only. New installs start empty — imports never invent checking or IRA accounts.</p>
 {link_panel}
 <form class="panel" method="post" action="/accounts">
   <h2>Add manual account</h2>
@@ -328,8 +334,14 @@ pub fn accounts_page(
   </div>
   <button type="submit" class="btn">Save account</button>
 </form>
+<form class="panel" method="post" action="/accounts/seed" onsubmit="return confirm('Load the sample household? This only runs when you have no accounts yet, unless you check wipe.');">
+  <h2>Optional demo data</h2>
+  <p class="muted">Sample accounts such as Everyday Checking and a Vanguard Roth IRA. Off by default on first start.</p>
+  <label class="check"><input type="checkbox" name="fresh" value="1"/> Wipe the database and replace everything with the demo</label>
+  <button type="submit" class="btn btn-quiet">Load demo household</button>
+</form>
 <table>
-  <thead><tr><th>Name</th><th>Type</th><th>Institution</th><th>Mask</th><th class="num">Balance</th></tr></thead>
+  <thead><tr><th>Name</th><th>Type</th><th>Institution</th><th>Mask</th><th class="num">Balance</th><th></th></tr></thead>
   <tbody>{rows}</tbody>
 </table>"#,
         link_panel = link_panel,

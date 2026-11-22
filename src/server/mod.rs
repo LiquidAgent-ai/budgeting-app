@@ -1,9 +1,8 @@
 //! HTTP server: open the encrypted DB, mount routes, serve static pages.
 
 use crate::api::{router, AppState};
-use crate::config::logging::{error_event, info_event};
+use crate::config::logging::info_event;
 use crate::config::Config;
-use crate::db::seed;
 use crate::db::Db;
 use axum::Router;
 use std::net::SocketAddr;
@@ -20,17 +19,17 @@ pub fn block_on_serve(config: Config) -> Result<(), String> {
 }
 
 async fn serve(config: Config) -> Result<(), String> {
-    let db = Db::open(config.database_path.clone(), config.database_key.clone())?;
-
-    // Load demo household on first run when the file did not already exist.
-    if !db.existed_at_startup() {
-        match seed::seed_database(&db, false) {
-            Ok((true, _)) => info_event("demo household seeded"),
-            Ok((false, _)) => {}
-            Err(_) => error_event("demo seed failed"),
+    // Fresh installs stay empty. Demo data is opt-in via POST /api/seed (or Accounts).
+    let opened = Db::open(config.database_path.clone(), config.database_key.clone())?;
+    info_event(&format!(
+        "database opened existed_at_startup={}",
+        if opened.existed_at_startup() {
+            "yes"
+        } else {
+            "no"
         }
-    }
-    let db = Arc::new(db);
+    ));
+    let db = Arc::new(opened);
 
     let state = AppState {
         db,
