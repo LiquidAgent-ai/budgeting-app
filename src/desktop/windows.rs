@@ -38,6 +38,7 @@ pub fn run() -> Result<(), String> {
     drop(key);
     load_plaid_file(&root.join("plaid.env"));
     load_teller_file(&root.join("teller.env"));
+    load_anchored_env_file(&root.join("anchored.env"));
 
     let config = Config::from_env()?;
     let (tx, rx) = std::sync::mpsc::channel();
@@ -366,6 +367,45 @@ fn load_teller_file(path: &Path) {
     }
     if loaded {
         info_event("teller configuration file loaded");
+    }
+}
+
+/// Optional desktop knobs (auto-sync interval / enable) from `%APPDATA%\Anchored\anchored.env`.
+fn load_anchored_env_file(path: &Path) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let mut loaded = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key != "ANCHORED_SYNC_ENABLED" && key != "ANCHORED_SYNC_INTERVAL_HOURS" {
+            continue;
+        }
+        if std::env::var_os(key).is_some_and(|v| !v.is_empty()) {
+            continue;
+        }
+        let mut value = value.trim().to_string();
+        if (value.starts_with('"') && value.ends_with('"') && value.len() >= 2)
+            || (value.starts_with('\'') && value.ends_with('\'') && value.len() >= 2)
+        {
+            value = value[1..value.len() - 1].to_string();
+        }
+        if value.is_empty() {
+            continue;
+        }
+        // SAFETY: still before the server thread starts.
+        unsafe { std::env::set_var(key, value) };
+        loaded = true;
+    }
+    if loaded {
+        info_event("anchored configuration file loaded");
     }
 }
 

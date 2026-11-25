@@ -96,3 +96,24 @@ pub fn info_event(msg: &str) {
 pub fn error_event(msg: &str) {
     error!("{msg}");
 }
+
+/// Truncate and flatten an error for sparse logs (no multiline dumps).
+pub fn short_reason(err: &str) -> String {
+    err.chars()
+        .filter(|c| *c != '\n' && *c != '\r')
+        .take(120)
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::short_reason;
+
+    #[test]
+    fn short_reason_flattens_and_truncates() {
+        let long = format!("{}\nsecret", "x".repeat(200));
+        let out = short_reason(&long);
+        assert!(!out.contains('\n'));
+        assert_eq!(out.len(), 120);
+    }
+}

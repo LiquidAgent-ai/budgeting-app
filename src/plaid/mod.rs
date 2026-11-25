@@ -1,6 +1,6 @@
 //! Read-only Plaid access only. Never requests transfers, payments, or Auth.
 
-use crate::config::logging::{error_event, info_event};
+use crate::config::logging::{error_event, info_event, short_reason};
 use crate::config::Config;
 use crate::db::duplicates::{self, DuplicateDecision, IncomingTxn};
 use crate::db::rules;
@@ -248,6 +248,8 @@ pub async fn sync_all(cfg: &Config, db: &Db) -> Result<Value, String> {
         return Err("Plaid is not configured".into());
     }
 
+    info_event("plaid sync started");
+
     let items: Vec<(String, String, Option<String>)> = {
         let conn = db.lock()?;
         let mut stmt = conn
@@ -262,14 +264,27 @@ pub async fn sync_all(cfg: &Config, db: &Db) -> Result<Value, String> {
     };
 
     let mut synced_items = 0i64;
+    let mut failed_items = 0i64;
     for (item_local_id, access_token, cursor) in items {
         match sync_item(cfg, db, &item_local_id, &access_token, cursor.as_deref()).await {
             Ok(()) => synced_items += 1,
-            Err(_) => error_event("plaid sync failed for an item"),
+            Err(e) => {
+                failed_items += 1;
+                error_event(&format!(
+                    "plaid sync failed for an item: {}",
+                    short_reason(&e)
+                ));
+            }
         }
     }
-    info_event(&format!("plaid sync finished items={synced_items}"));
-    Ok(json!({ "ok": true, "items": synced_items }))
+    info_event(&format!(
+        "plaid sync finished ok={synced_items} failed={failed_items}"
+    ));
+    Ok(json!({
+        "ok": true,
+        "items": synced_items,
+        "failed": failed_items,
+    }))
 }
 
 async fn sync_item(

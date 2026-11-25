@@ -1,6 +1,6 @@
 //! Read-only Teller access only. Never requests payments, verify, or identity.
 
-use crate::config::logging::{error_event, info_event};
+use crate::config::logging::{error_event, info_event, short_reason};
 use crate::config::Config;
 use crate::db::duplicates::{self, DuplicateDecision, IncomingTxn};
 use crate::db::rules;
@@ -319,6 +319,8 @@ pub async fn sync_all(cfg: &Config, db: &Db) -> Result<Value, String> {
         return Err("Teller is not configured".into());
     }
 
+    info_event("teller sync started");
+
     let enrollments: Vec<(String, String, Option<String>)> = {
         let conn = db.lock()?;
         let mut stmt = conn
@@ -333,14 +335,27 @@ pub async fn sync_all(cfg: &Config, db: &Db) -> Result<Value, String> {
     };
 
     let mut synced = 0i64;
+    let mut failed = 0i64;
     for (local_id, access_token, last_sync) in enrollments {
         match sync_enrollment(cfg, db, &local_id, &access_token, last_sync.as_deref()).await {
             Ok(()) => synced += 1,
-            Err(_) => error_event("teller sync failed for an enrollment"),
+            Err(e) => {
+                failed += 1;
+                error_event(&format!(
+                    "teller sync failed for an enrollment: {}",
+                    short_reason(&e)
+                ));
+            }
         }
     }
-    info_event(&format!("teller sync finished enrollments={synced}"));
-    Ok(json!({ "ok": true, "enrollments": synced }))
+    info_event(&format!(
+        "teller sync finished ok={synced} failed={failed}"
+    ));
+    Ok(json!({
+        "ok": true,
+        "enrollments": synced,
+        "failed": failed,
+    }))
 }
 
 async fn sync_enrollment(
