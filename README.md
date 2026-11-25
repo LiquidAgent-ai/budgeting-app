@@ -14,6 +14,8 @@ The books stay encrypted at `%APPDATA%\Anchored\anchored.db`. Windows seals the 
 
 To link a bank with Teller, put `TELLER_APPLICATION_ID` and optional `TELLER_ENV` in `%APPDATA%\Anchored\teller.env`. For Teller development/production, also set `TELLER_CERT_PATH` and `TELLER_KEY_PATH` to certificate files under that folder. Plaid remains available via `%APPDATA%\Anchored\plaid.env`. Anchored only asks for read-only access.
 
+Automatic daily sync is on by default when Teller or Plaid is configured. To change it on Windows, put `ANCHORED_SYNC_ENABLED` and/or `ANCHORED_SYNC_INTERVAL_HOURS` in `%APPDATA%\Anchored\anchored.env` (same keys as in `.env.example`).
+
 ## Run locally
 
 ```bash
@@ -109,9 +111,20 @@ Teller's developer tier includes up to 100 live connections at no charge. Sandbo
 
 To use Plaid instead (or as well), set `PLAID_CLIENT_ID`, `PLAID_SECRET`, and optional `PLAID_ENV=sandbox` in `.env.local` or the container environment. Anchored only asks Plaid for read-only access: transactions, balances, investments, and optional liabilities. It does not request transfers, payments, Auth, or account numbers for moving money. The gate lives in `src/plaid/mod.rs`.
 
+### Automatic sync
+
+When Teller or Plaid is configured, Anchored syncs connected items and enrollments in the background without clicking Sync. The job runs inside the same Rust process on Windows desktop and in the container.
+
+| Env | Default | Meaning |
+| --- | --- | --- |
+| `ANCHORED_SYNC_ENABLED` | on | Set to `0`, `false`, `off`, or `no` to turn auto-sync off |
+| `ANCHORED_SYNC_INTERVAL_HOURS` | `24` | Hours between runs; `0` also disables |
+
+Set these in `.env.local` / the container environment, or on Windows in `%APPDATA%\Anchored\anchored.env`. Manual Sync on Accounts still works. Sync stays read-only and reuses the same duplicate skip as imports. One bad connection does not stop the others.
+
 ## Logs
 
-Anchored writes one plain line when something actually happens: the server starts, the database opens or closes, a bank is linked, a sync finishes or fails, or a request fails. Successful pages, static files, and `/api/health` checks are left out. The database key, bank tokens, account numbers, and transaction details are not written.
+Anchored writes one plain line when something actually happens: the server starts, the database opens or closes, a bank is linked, a scheduled or manual sync starts or finishes (with counts), a sync fails (short reason only), or a request fails. Successful pages, static files, and `/api/health` checks are left out. The database key, bank tokens, account numbers, amounts, payees, and transaction details are not written.
 
 ## Commands
 

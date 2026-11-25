@@ -23,6 +23,10 @@ pub struct Config {
     pub teller_cert_pem: Option<String>,
     pub teller_key_pem: Option<String>,
     pub in_container: bool,
+    /// When false, the background bank sync job does not run.
+    pub sync_enabled: bool,
+    /// Hours between automatic Plaid/Teller syncs (default 24). Zero disables.
+    pub sync_interval_hours: u64,
 }
 
 impl Config {
@@ -116,6 +120,10 @@ impl Config {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
 
+        let sync_enabled = sync_enabled_from(env::var("ANCHORED_SYNC_ENABLED").ok().as_deref());
+        let sync_interval_hours =
+            sync_interval_hours_from(env::var("ANCHORED_SYNC_INTERVAL_HOURS").ok().as_deref());
+
         Ok(Self {
             database_path,
             database_key: key,
@@ -132,7 +140,14 @@ impl Config {
             teller_cert_pem,
             teller_key_pem,
             in_container,
+            sync_enabled,
+            sync_interval_hours,
         })
+    }
+
+    /// Background sync runs when enabled, interval is positive, and a bank API is configured.
+    pub fn auto_sync_active(&self) -> bool {
+        self.sync_enabled && self.sync_interval_hours > 0 && self.bank_linking_configured()
     }
 
     pub fn plaid_configured(&self) -> bool {
@@ -195,6 +210,31 @@ impl Config {
     }
 }
 
+/// Default on. Set `ANCHORED_SYNC_ENABLED` to 0/false/off/no to disable.
+pub fn sync_enabled_from(raw: Option<&str>) -> bool {
+    match raw {
+        None => true,
+        Some(v) => {
+            let v = v.trim().to_ascii_lowercase();
+            !matches!(v.as_str(), "0" | "false" | "off" | "no")
+        }
+    }
+}
+
+/// Hours between automatic syncs. Default 24. Invalid values fall back to 24.
+pub fn sync_interval_hours_from(raw: Option<&str>) -> u64 {
+    match raw {
+        None => 24,
+        Some(s) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                return 24;
+            }
+            trimmed.parse().unwrap_or(24)
+        }
+    }
+}
+
 /// Fill selected keys from .env.local or .env when unset.
 fn load_dotenv_keys() {
     const KEYS: &[&str] = &[
@@ -209,6 +249,8 @@ fn load_dotenv_keys() {
         "TELLER_KEY_PATH",
         "TELLER_CERT_PEM",
         "TELLER_KEY_PEM",
+        "ANCHORED_SYNC_ENABLED",
+        "ANCHORED_SYNC_INTERVAL_HOURS",
         "APP_URL",
         "HOST",
         "PORT",
@@ -280,6 +322,8 @@ impl std::fmt::Debug for Config {
                 &self.teller_key_pem.as_ref().map(|_| "[redacted]"),
             )
             .field("in_container", &self.in_container)
+            .field("sync_enabled", &self.sync_enabled)
+            .field("sync_interval_hours", &self.sync_interval_hours)
             .finish()
     }
 }
@@ -311,6 +355,8 @@ mod tests {
             teller_cert_pem: Some(teller_pem.into()),
             teller_key_pem: Some("teller-key-pem-value".into()),
             in_container: false,
+            sync_enabled: true,
+            sync_interval_hours: 24,
         };
         let text = format!("{cfg:?}");
         assert!(!text.contains(secret_key));
@@ -320,5 +366,56 @@ mod tests {
         assert!(!text.contains("teller-cert"));
         assert!(!text.contains("teller-key-pem-value"));
         assert!(text.contains("redacted"));
+    }
+
+    #[test]
+    fn sync_enabled_defaults_on_and_accepts_off_values() {
+        assert!(sync_enabled_from(None));
+        assert!(sync_enabled_from(Some("1")));
+        assert!(sync_enabled_from(Some("true")));
+        assert!(!sync_enabled_from(Some("0")));
+        assert!(!sync_enabled_from(Some("false")));
+        assert!(!sync_enabled_from(Some("OFF")));
+        assert!(!sync_enabled_from(Some("no")));
+    }
+
+    #[test]
+    fn sync_interval_hours_defaults_and_parses() {
+        assert_eq!(sync_interval_hours_from(None), 24);
+        assert_eq!(sync_interval_hours_from(Some("")), 24);
+        assert_eq!(sync_interval_hours_from(Some("12")), 12);
+        assert_eq!(sync_interval_hours_from(Some("0")), 0);
+        assert_eq!(sync_interval_hours_from(Some("nope")), 24);
+    }
+
+    #[test]
+    fn auto_sync_active_requires_enable_interval_and_bank() {
+        let mut cfg = Config {
+            database_path: PathBuf::from("data/anchored.db"),
+            database_key: "super-secret-database-key-value".into(),
+            bind_host: "127.0.0.1".into(),
+            port: 3000,
+            app_url: None,
+            plaid_client_id: None,
+            plaid_secret: None,
+            plaid_env: "sandbox".into(),
+            teller_application_id: None,
+            teller_env: "sandbox".into(),
+            teller_cert_path: None,
+            teller_key_path: None,
+            teller_cert_pem: None,
+            teller_key_pem: None,
+            in_container: false,
+            sync_enabled: true,
+            sync_interval_hours: 24,
+        };
+        assert!(!cfg.auto_sync_active());
+        cfg.teller_application_id = Some("app_test".into());
+        assert!(cfg.auto_sync_active());
+        cfg.sync_enabled = false;
+        assert!(!cfg.auto_sync_active());
+        cfg.sync_enabled = true;
+        cfg.sync_interval_hours = 0;
+        assert!(!cfg.auto_sync_active());
     }
 }

@@ -1,13 +1,15 @@
 //! HTTP server: open the encrypted DB, mount routes, serve static pages.
 
 use crate::api::{router, AppState};
-use crate::config::logging::info_event;
+use crate::config::logging::{error_event, info_event, short_reason};
 use crate::config::Config;
 use crate::db::Db;
+use crate::{plaid, teller};
 use axum::Router;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tower_http::services::ServeDir;
 
 pub fn block_on_serve(config: Config) -> Result<(), String> {
@@ -30,6 +32,8 @@ async fn serve(config: Config) -> Result<(), String> {
         }
     ));
     let db = Arc::new(opened);
+
+    spawn_auto_sync(config.clone(), Arc::clone(&db));
 
     let state = AppState {
         db,
@@ -59,6 +63,69 @@ async fn serve(config: Config) -> Result<(), String> {
         .await
         .map_err(|e| format!("server error: {e}"))?;
     Ok(())
+}
+
+/// Periodic read-only Plaid/Teller sync in the same Rust process (desktop + container).
+fn spawn_auto_sync(config: Config, db: Arc<Db>) {
+    if !config.auto_sync_active() {
+        return;
+    }
+    let hours = config.sync_interval_hours;
+    info_event(&format!(
+        "scheduled bank sync enabled interval_hours={hours}"
+    ));
+    tokio::spawn(async move {
+        let interval = Duration::from_secs(hours.saturating_mul(3600));
+        loop {
+            run_scheduled_sync(&config, &db).await;
+            tokio::time::sleep(interval).await;
+        }
+    });
+}
+
+async fn run_scheduled_sync(config: &Config, db: &Db) {
+    info_event("scheduled bank sync started");
+
+    let mut plaid_ok = 0i64;
+    let mut plaid_failed = 0i64;
+    let mut teller_ok = 0i64;
+    let mut teller_failed = 0i64;
+
+    if config.plaid_configured() {
+        match plaid::sync_all(config, db).await {
+            Ok(v) => {
+                plaid_ok = v.get("items").and_then(|x| x.as_i64()).unwrap_or(0);
+                plaid_failed = v.get("failed").and_then(|x| x.as_i64()).unwrap_or(0);
+            }
+            Err(e) => {
+                plaid_failed = 1;
+                error_event(&format!(
+                    "scheduled plaid sync failed: {}",
+                    short_reason(&e)
+                ));
+            }
+        }
+    }
+
+    if config.teller_configured() {
+        match teller::sync_all(config, db).await {
+            Ok(v) => {
+                teller_ok = v.get("enrollments").and_then(|x| x.as_i64()).unwrap_or(0);
+                teller_failed = v.get("failed").and_then(|x| x.as_i64()).unwrap_or(0);
+            }
+            Err(e) => {
+                teller_failed = 1;
+                error_event(&format!(
+                    "scheduled teller sync failed: {}",
+                    short_reason(&e)
+                ));
+            }
+        }
+    }
+
+    info_event(&format!(
+        "scheduled bank sync finished plaid_ok={plaid_ok} plaid_failed={plaid_failed} teller_ok={teller_ok} teller_failed={teller_failed}"
+    ));
 }
 
 async fn shutdown_signal() {
